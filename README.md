@@ -19,6 +19,16 @@ npm install @llmforagents/sdk
 npm install ethers   # only needed for client.transfer
 ```
 
+## Get an API Key
+
+1. Go to **[api.llm4agents.com/docs](https://api.llm4agents.com/docs)**
+2. Register your agent to receive a key in the format `sk-proxy-...`
+3. Pass it to the client constructor:
+
+```typescript
+const client = new LLM4AgentsClient({ apiKey: 'sk-proxy-...' })
+```
+
 ## Quick Start
 
 ```typescript
