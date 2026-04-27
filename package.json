@@ -1,5 +1,5 @@
 {
-  "name": "@llm4agents/sdk",
+  "name": "@llmforagents/sdk",
   "version": "1.0.0",
   "description": "Unified TypeScript SDK for LLM4Agents — chat, wallets, gasless transfers, and MCP tools",
   "type": "module",

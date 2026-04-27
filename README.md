@@ -1,11 +1,11 @@
-# @llm4agents/sdk
+# @llmforagents/sdk
 
 Unified TypeScript SDK for the LLM4Agents platform — chat completions, wallet management, gasless stablecoin transfers, and MCP-powered tools through a single client.
 
 ## Install
 
 ```bash
-npm install @llm4agents/sdk
+npm install @llmforagents/sdk
 ```
 
 `ethers` is an optional peer dependency, required only for gasless transfers:
@@ -17,7 +17,7 @@ npm install ethers   # only needed for client.transfer
 ## Quick Start
 
 ```typescript
-import { LLM4AgentsClient } from '@llm4agents/sdk'
+import { LLM4AgentsClient } from '@llmforagents/sdk'
 
 const client = new LLM4AgentsClient({ apiKey: 'sk-proxy-...' })
 
@@ -216,7 +216,7 @@ for (const m of models) {
 All errors are instances of `LLM4AgentsError`:
 
 ```typescript
-import { LLM4AgentsClient, LLM4AgentsError } from '@llm4agents/sdk'
+import { LLM4AgentsClient, LLM4AgentsError } from '@llmforagents/sdk'
 
 try {
   await client.chat.completions.create({ ... })
@@ -260,9 +260,9 @@ const client = new LLM4AgentsClient({
 
 ## Migration from @llm4agents/gasless
 
-`@llm4agents/gasless` is deprecated. Replace it with `@llm4agents/sdk`:
+`@llm4agents/gasless` is deprecated. Replace it with `@llmforagents/sdk`:
 
-| Before (`@llm4agents/gasless`) | After (`@llm4agents/sdk`) |
+| Before (`@llm4agents/gasless`) | After (`@llmforagents/sdk`) |
 |---|---|
 | `new GaslessClient({ apiKey })` | `new LLM4AgentsClient({ apiKey })` |
 | `gc.transfer(params)` | `client.transfer.send(params)` |
