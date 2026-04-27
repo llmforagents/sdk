@@ -1,5 +1,10 @@
 # @llmforagents/sdk
 
+[![npm version](https://img.shields.io/npm/v/@llmforagents/sdk)](https://www.npmjs.com/package/@llmforagents/sdk)
+[![npm downloads](https://img.shields.io/npm/dm/@llmforagents/sdk)](https://www.npmjs.com/package/@llmforagents/sdk)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![GitHub](https://img.shields.io/badge/GitHub-llmforagents%2Fsdk-blue)](https://github.com/llmforagents/sdk)
+
 Unified TypeScript SDK for the LLM4Agents platform — chat completions, wallet management, gasless stablecoin transfers, and MCP-powered tools through a single client.
 
 ## Install
@@ -93,8 +98,7 @@ console.log(answer.content)
 console.log(answer.toolCalls)   // ToolCallRecord[] of executed tools
 
 // Streaming conversation
-const streamed = await conv.stream('Now find the current price')
-for await (const event of streamed) {
+for await (const event of conv.stream('Now find the current price')) {
   switch (event.type) {
     case 'text':       process.stdout.write(event.content); break
     case 'tool_start': console.log(`\n[tool] ${event.name}`); break
