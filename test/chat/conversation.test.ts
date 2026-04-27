@@ -1,0 +1,322 @@
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { Conversation } from '../../src/chat/conversation.js';
+import { HttpTransport } from '../../src/transport/http.js';
+import { McpTransport } from '../../src/transport/mcp.js';
+import { Tools } from '../../src/tools/tools.js';
+import { LLM4AgentsError } from '../../src/errors.js';
+
+const API_KEY = 'sk-proxy-test-key';
+const BASE_URL = 'https://api.test.com';
+const MCP_URL = 'https://mcp.test.com/mcp';
+
+let fetchSpy: ReturnType<typeof vi.fn>;
+let http: HttpTransport;
+let tools: Tools;
+
+function chatResponse(content: string, toolCalls?: unknown[]) {
+  return new Response(JSON.stringify({
+    id: 'c1',
+    choices: [{
+      index: 0,
+      message: {
+        role: 'assistant',
+        content: toolCalls ? null : content,
+        ...(toolCalls ? { tool_calls: toolCalls } : {}),
+      },
+      finish_reason: toolCalls ? 'tool_calls' : 'stop',
+    }],
+    usage: { prompt_tokens: 10, completion_tokens: 5 },
+    model: 'test-model',
+  }), { status: 200, headers: { 'content-type': 'application/json', 'x-request-id': 'req_cv' } });
+}
+
+function mcpResponse(text: string) {
+  return new Response(JSON.stringify({
+    result: { content: [{ type: 'text', text }] },
+  }), { status: 200, headers: { 'content-type': 'application/json' } });
+}
+
+function mcpToolsList() {
+  return new Response(JSON.stringify({
+    result: { tools: [{ name: 'google_search', description: 'Search', inputSchema: { type: 'object', properties: { q: { type: 'string' } } } }] },
+  }), { status: 200, headers: { 'content-type': 'application/json' } });
+}
+
+beforeEach(() => {
+  fetchSpy = vi.fn();
+  globalThis.fetch = fetchSpy;
+  http = new HttpTransport({ baseUrl: BASE_URL, apiKey: API_KEY, timeout: 5000 });
+  const mcp = new McpTransport({ mcpUrl: MCP_URL, apiKey: API_KEY, timeout: 60000 });
+  tools = new Tools(mcp);
+});
+
+afterEach(() => { vi.restoreAllMocks(); });
+
+describe('Conversation.say()', () => {
+  it('sends user message and returns assistant response', async () => {
+    fetchSpy.mockResolvedValueOnce(chatResponse('Hello!'));
+
+    const conv = new Conversation(http, { model: 'test-model' });
+    const result = await conv.say('Hi');
+
+    expect(result.content).toBe('Hello!');
+    expect(result.toolCalls).toHaveLength(0);
+    expect(conv.messages).toHaveLength(2); // user + assistant
+  });
+
+  it('accumulates history across multiple say() calls', async () => {
+    fetchSpy
+      .mockResolvedValueOnce(chatResponse('First'))
+      .mockResolvedValueOnce(chatResponse('Second'));
+
+    const conv = new Conversation(http, { model: 'test-model' });
+    await conv.say('One');
+    await conv.say('Two');
+
+    expect(conv.messages).toHaveLength(4); // user, assistant, user, assistant
+  });
+
+  it('includes system message when provided', async () => {
+    fetchSpy.mockResolvedValueOnce(chatResponse('OK'));
+
+    const conv = new Conversation(http, { model: 'test-model', system: 'You are helpful' });
+    await conv.say('Hi');
+
+    const [, opts] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(opts.body as string) as { messages: { role: string; content: string }[] };
+    expect(body.messages[0]?.role).toBe('system');
+    expect(body.messages[0]?.content).toBe('You are helpful');
+  });
+});
+
+describe('Conversation tool loop', () => {
+  it('executes tool calls and feeds results back to LLM', async () => {
+    // 1. MCP tools/list (for definitions — called before LLM)
+    fetchSpy.mockResolvedValueOnce(mcpToolsList());
+    // 2. LLM returns tool_call
+    fetchSpy.mockResolvedValueOnce(chatResponse('', [
+      { id: 'tc_1', type: 'function', function: { name: 'google_search', arguments: '{"q":"Bitcoin"}' } },
+    ]));
+    // 3. MCP callTool
+    fetchSpy.mockResolvedValueOnce(mcpResponse('Bitcoin is at $100k'));
+    // 4. LLM final response with tool result (definitions cached, no MCP call)
+    fetchSpy.mockResolvedValueOnce(chatResponse('Bitcoin is currently at $100k'));
+
+    const conv = new Conversation(http, { model: 'test-model', tools });
+    const result = await conv.say('What is Bitcoin price?');
+
+    expect(result.content).toBe('Bitcoin is currently at $100k');
+    expect(result.toolCalls).toHaveLength(1);
+    expect(result.toolCalls[0]?.name).toBe('google_search');
+    expect(result.toolCalls[0]?.result).toBe('Bitcoin is at $100k');
+  });
+
+  it('calls onToolCall hook and skips when it returns false', async () => {
+    // 1. MCP tools/list (for definitions — called before LLM)
+    fetchSpy.mockResolvedValueOnce(mcpToolsList());
+    // 2. LLM returns tool_call
+    fetchSpy.mockResolvedValueOnce(chatResponse('', [
+      { id: 'tc_1', type: 'function', function: { name: 'google_search', arguments: '{"q":"test"}' } },
+    ]));
+    // No MCP callTool — hook cancels it
+    // 3. LLM final response (definitions cached)
+    fetchSpy.mockResolvedValueOnce(chatResponse('I could not search'));
+
+    const onToolCall = vi.fn().mockReturnValue(false);
+
+    const conv = new Conversation(http, { model: 'test-model', tools, onToolCall });
+    const result = await conv.say('Search something');
+
+    expect(onToolCall).toHaveBeenCalledWith('google_search', { q: 'test' });
+    expect(result.content).toBe('I could not search');
+  });
+
+  it('throws tool_loop_limit when maxToolRounds exceeded', async () => {
+    // MCP tools/list first (called before first LLM call)
+    fetchSpy.mockResolvedValueOnce(mcpToolsList());
+    // LLM keeps returning tool calls for 3 rounds, but limit is 2
+    for (let i = 0; i < 3; i++) {
+      fetchSpy.mockResolvedValueOnce(chatResponse('', [
+        { id: `tc_${i}`, type: 'function', function: { name: 'google_search', arguments: '{"q":"loop"}' } },
+      ]));
+      fetchSpy.mockResolvedValueOnce(mcpResponse('result'));
+    }
+
+    const conv = new Conversation(http, { model: 'test-model', tools, maxToolRounds: 2 });
+
+    try {
+      await conv.say('Loop forever');
+      expect.unreachable('should have thrown');
+    } catch (err) {
+      expect(err).toBeInstanceOf(LLM4AgentsError);
+      expect((err as LLM4AgentsError).code).toBe('tool_loop_limit');
+    }
+  });
+});
+
+describe('Conversation.clear()', () => {
+  it('resets history but keeps system prompt', async () => {
+    fetchSpy.mockResolvedValueOnce(chatResponse('OK'));
+
+    const conv = new Conversation(http, { model: 'test-model', system: 'Be helpful' });
+    await conv.say('Hi');
+    expect(conv.messages.length).toBeGreaterThan(0);
+
+    conv.clear();
+    expect(conv.messages).toHaveLength(0);
+
+    // Next say() should still include system prompt
+    fetchSpy.mockResolvedValueOnce(chatResponse('OK again'));
+    await conv.say('Hello again');
+
+    const [, opts] = fetchSpy.mock.calls[1] as [string, RequestInit];
+    const body = JSON.parse(opts.body as string) as { messages: { role: string }[] };
+    expect(body.messages[0]?.role).toBe('system');
+  });
+});
+
+describe('Conversation.fork()', () => {
+  it('creates independent copy of history', async () => {
+    fetchSpy.mockResolvedValueOnce(chatResponse('Base'));
+
+    const conv = new Conversation(http, { model: 'test-model' });
+    await conv.say('Setup');
+
+    const forked = conv.fork();
+    expect(forked.messages).toEqual(conv.messages);
+
+    fetchSpy.mockResolvedValueOnce(chatResponse('Forked response'));
+    await forked.say('Only in fork');
+
+    expect(forked.messages.length).toBe(conv.messages.length + 2);
+    expect(conv.messages).toHaveLength(2); // unchanged
+  });
+});
+
+describe('Conversation with history rehydration', () => {
+  it('restores messages from provided history', async () => {
+    const savedHistory = [
+      { role: 'user' as const, content: 'Previous question' },
+      { role: 'assistant' as const, content: 'Previous answer' },
+    ];
+
+    fetchSpy.mockResolvedValueOnce(chatResponse('Continued'));
+
+    const conv = new Conversation(http, { model: 'test-model', history: savedHistory });
+    expect(conv.messages).toHaveLength(2);
+
+    await conv.say('Continue');
+    expect(conv.messages).toHaveLength(4);
+  });
+});
+
+describe('Conversation.stream()', () => {
+  function sseStream(chunks: string[]): Response {
+    const joined = chunks.join('');
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(joined));
+        controller.close();
+      },
+    });
+    return new Response(stream, {
+      status: 200,
+      headers: { 'content-type': 'text/event-stream', 'x-request-id': 'req_s' },
+    });
+  }
+
+  it('yields text events from streaming LLM response', async () => {
+    fetchSpy.mockResolvedValueOnce(sseStream([
+      'data: {"id":"c1","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}\n\n',
+      'data: {"id":"c1","choices":[{"index":0,"delta":{"content":"Hello "},"finish_reason":null}]}\n\n',
+      'data: {"id":"c1","choices":[{"index":0,"delta":{"content":"world"},"finish_reason":null}]}\n\n',
+      'data: {"id":"c1","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":5,"completion_tokens":2}}\n\n',
+      'data: [DONE]\n\n',
+    ]));
+
+    const conv = new Conversation(http, { model: 'test-model' });
+    const events: unknown[] = [];
+    for await (const event of await conv.stream('Hi')) {
+      events.push(event);
+    }
+
+    const textEvents = events.filter((e: any) => e.type === 'text');
+    expect(textEvents).toHaveLength(2);
+    expect((textEvents[0] as any).content).toBe('Hello ');
+    expect((textEvents[1] as any).content).toBe('world');
+
+    const doneEvent = events.find((e: any) => e.type === 'done') as any;
+    expect(doneEvent).toBeDefined();
+    expect(doneEvent.response.content).toBe('Hello world');
+  });
+
+  it('handles tool calls in streaming mode', async () => {
+    // 1. MCP tools/list (for definitions — called before LLM)
+    fetchSpy.mockResolvedValueOnce(mcpToolsList());
+    // 2. LLM streams a tool call
+    fetchSpy.mockResolvedValueOnce(sseStream([
+      'data: {"id":"c1","choices":[{"index":0,"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"tc_1","type":"function","function":{"name":"google_search","arguments":""}}]},"finish_reason":null}]}\n\n',
+      'data: {"id":"c1","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\\"q\\":\\"BTC\\"}"}}]},"finish_reason":null}]}\n\n',
+      'data: {"id":"c1","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":10,"completion_tokens":5}}\n\n',
+      'data: [DONE]\n\n',
+    ]));
+    // 3. MCP callTool
+    fetchSpy.mockResolvedValueOnce(mcpResponse('BTC at $100k'));
+    // 4. LLM final response (streaming, definitions cached)
+    fetchSpy.mockResolvedValueOnce(sseStream([
+      'data: {"id":"c2","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}\n\n',
+      'data: {"id":"c2","choices":[{"index":0,"delta":{"content":"Bitcoin is $100k"},"finish_reason":null}]}\n\n',
+      'data: {"id":"c2","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":15,"completion_tokens":4}}\n\n',
+      'data: [DONE]\n\n',
+    ]));
+
+    const conv = new Conversation(http, { model: 'test-model', tools });
+    const events: unknown[] = [];
+    for await (const event of await conv.stream('BTC price?')) {
+      events.push(event);
+    }
+
+    const toolStart = events.find((e: any) => e.type === 'tool_start') as any;
+    expect(toolStart).toBeDefined();
+    expect(toolStart.name).toBe('google_search');
+
+    const toolEnd = events.find((e: any) => e.type === 'tool_end') as any;
+    expect(toolEnd).toBeDefined();
+    expect(toolEnd.result).toBe('BTC at $100k');
+
+    const textEvents = events.filter((e: any) => e.type === 'text');
+    expect(textEvents.some((e: any) => e.content.includes('Bitcoin'))).toBe(true);
+
+    const doneEvent = events.find((e: any) => e.type === 'done') as any;
+    expect(doneEvent.response.content).toBe('Bitcoin is $100k');
+  });
+
+  it('emits tool_end with cancelled when onToolCall returns false', async () => {
+    // 1. MCP tools/list (for definitions — called before LLM)
+    fetchSpy.mockResolvedValueOnce(mcpToolsList());
+    // 2. LLM streams a tool call
+    fetchSpy.mockResolvedValueOnce(sseStream([
+      'data: {"id":"c1","choices":[{"index":0,"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"tc_1","type":"function","function":{"name":"google_search","arguments":"{\\"q\\":\\"test\\"}"}}]},"finish_reason":null}]}\n\n',
+      'data: {"id":"c1","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":5,"completion_tokens":2}}\n\n',
+      'data: [DONE]\n\n',
+    ]));
+    // No MCP callTool — hook cancels it
+    // 3. LLM response after cancelled tool (definitions cached)
+    fetchSpy.mockResolvedValueOnce(sseStream([
+      'data: {"id":"c2","choices":[{"index":0,"delta":{"content":"Cannot search"},"finish_reason":null}]}\n\n',
+      'data: {"id":"c2","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":2}}\n\n',
+      'data: [DONE]\n\n',
+    ]));
+
+    const onToolCall = vi.fn().mockReturnValue(false);
+    const conv = new Conversation(http, { model: 'test-model', tools, onToolCall });
+    const events: unknown[] = [];
+    for await (const event of await conv.stream('Search')) {
+      events.push(event);
+    }
+
+    expect(onToolCall).toHaveBeenCalledWith('google_search', { q: 'test' });
+    const toolEnd = events.find((e: any) => e.type === 'tool_end') as any;
+    expect(toolEnd.result).toBe('cancelled by hook');
+  });
+});
