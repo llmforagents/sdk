@@ -45,9 +45,12 @@
     "vitest": "^2.0.0"
   },
   "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
   "repository": {
     "type": "git",
-    "url": "https://github.com/llm4agents/sdk.git"
+    "url": "https://github.com/llmforagents/sdk.git"
   },
   "keywords": [
     "llm",
