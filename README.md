@@ -36,14 +36,6 @@ import { LLM4AgentsClient } from '@llmforagents/sdk'
 
 const client = new LLM4AgentsClient({ apiKey: 'sk-proxy-...' })
 
-// One-call gasless transfer
-const result = await client.transfer.send({
-  chain: 'polygon', token: 'USDC',
-  to: '0xRecipient...', amount: '10.50',
-  privateKey: '0x...',
-})
-console.log(result.txHash, result.explorerUrl)
-
 // Chat completion
 const response = await client.chat.completions.create({
   model: 'anthropic/claude-sonnet-4',
@@ -59,6 +51,14 @@ const conv = client.chat.conversation({
 })
 const answer = await conv.say('Search for Bitcoin news and summarize the top 3')
 console.log(answer.content)
+
+// Gasless stablecoin transfer (optional — requires ethers)
+const result = await client.transfer.send({
+  chain: 'polygon', token: 'USDC',
+  to: '0xRecipient...', amount: '10.50',
+  privateKey: '0x...',
+})
+console.log(result.txHash, result.explorerUrl)
 ```
 
 ## Chat
