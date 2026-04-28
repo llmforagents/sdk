@@ -60,7 +60,7 @@ options:
   system: string (optional)
   tools: Tools (optional)
   history: ChatMessage[] (optional, default: [])
-  onToolCall: (name: string, args: object) → bool (optional, return false to cancel)
+  onToolCall: (name: string, args: object) → bool | Promise<bool> (optional, return false to cancel)
   onToolResult: (name: string, result: string) → void (optional)
   maxToolRounds: int (optional, default: 10)
 
