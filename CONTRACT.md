@@ -16,8 +16,7 @@ options:
 ### create(params) → ChatResponse
 ### create(params, stream=true) → AsyncIterable<StreamChunk>
 params:
-  model: string (required, mutually exclusive with models)
-  models: string[] (optional, 2–3 fallback slugs, mutually exclusive with model)
+  model: string (required)
   messages: ChatMessage[] (required)
   temperature: float (optional)
   max_tokens: int (optional)
@@ -84,7 +83,13 @@ StreamEvent (discriminated union on `type`):
   { type: "tool_end", name: string, result: string, durationMs: int }
   { type: "done", response: ConversationResponse }
 
-### conversation.history → ChatMessage[] (read-only getter)
+### conversation.messages → readonly ChatMessage[] (read-only getter)
+
+### conversation.clear() → void
+Resets conversation history to empty (keeps system prompt and options).
+
+### conversation.fork() → Conversation
+Returns a new Conversation with a copy of the current history (same model/system/options).
 
 ## wallets
 
@@ -210,6 +215,9 @@ Convenience: derives `from` address from privateKey, calls quote() then submit()
 errors: same as submit()
 
 ## tools
+
+### definitions → readonly ToolDefinition[] | undefined (read-only getter)
+Returns cached tool definitions. undefined until getDefinitions() has been called.
 
 ### getDefinitions() → ToolDefinition[]
 Fetches live MCP tool list. Result is cached after first call.
