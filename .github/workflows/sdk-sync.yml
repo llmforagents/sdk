@@ -1,0 +1,81 @@
+name: SDK Sync — Notify Python SDK
+
+on:
+  push:
+    branches: [main]
+    paths: [CONTRACT.md]
+
+jobs:
+  create-tracking-issue:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Extract version and diff
+        id: contract
+        run: |
+          VERSION=$(grep '^version:' CONTRACT.md | head -1 | awk '{print $2}')
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+          # Multiline output via delimiter
+          DELIMITER="EOF_$(openssl rand -hex 8)"
+          echo "diff<<$DELIMITER" >> "$GITHUB_OUTPUT"
+          git diff HEAD~1 HEAD -- CONTRACT.md >> "$GITHUB_OUTPUT"
+          echo "$DELIMITER" >> "$GITHUB_OUTPUT"
+
+      - name: Create tracking issue in Python SDK repo
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.PYTHON_SDK_REPO_TOKEN }}
+          script: |
+            const version = '${{ steps.contract.outputs.version }}';
+            const diff = `${{ steps.contract.outputs.diff }}`;
+            const commitSha = '${{ github.sha }}';
+            const commitUrl = `https://github.com/${{ github.repository }}/commit/${commitSha}`;
+            const contractUrl = `https://github.com/${{ github.repository }}/blob/${commitSha}/CONTRACT.md`;
+
+            const isMajor = version.split('.')[1] === '0' && version.split('.')[2] === '0'
+              && version !== '1.0.0';
+
+            const labels = isMajor
+              ? ['sdk-sync', 'breaking-change']
+              : ['sdk-sync'];
+
+            await github.rest.issues.create({
+              owner: 'llmforagents',
+              repo: 'sdk-python',
+              title: `[sync] CONTRACT updated to v${version}`,
+              body: [
+                `## SDK Contract updated to v${version}`,
+                ``,
+                `The TypeScript SDK was updated in commit: ${commitUrl}`,
+                ``,
+                `### What changed in the API surface`,
+                ``,
+                `\`\`\`diff`,
+                diff,
+                `\`\`\``,
+                ``,
+                `### What needs to be implemented in the Python SDK`,
+                ``,
+                `- [ ] Review the diff above and implement all API surface changes in Python`,
+                `- [ ] Update \`pyproject.toml\` version to \`${version}\``,
+                `- [ ] Run the full test suite: \`pytest\``,
+                `- [ ] Close this issue when the Python PR is merged`,
+                ``,
+                `### Semver impact`,
+                ``,
+                isMajor
+                  ? `**MAJOR** — breaking change, coordinate release timing with TS SDK`
+                  : `**MINOR/PATCH** — additive or fix only`,
+                ``,
+                `### Reference`,
+                ``,
+                `- TS SDK commit: ${commitUrl}`,
+                `- CONTRACT.md at this version: ${contractUrl}`,
+              ].join('\n'),
+              labels,
+            });
