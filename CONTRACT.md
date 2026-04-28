@@ -2,6 +2,8 @@
 
 version: 1.0.0
 
+> **Naming convention:** Fields in API wire responses (ChatResponse, StreamChunk, ChatMessage, Transaction) use `snake_case` to match the OpenAI-compatible wire format. Fields in SDK wrapper objects (ConversationResponse, WalletInfo, Balance, TransferResult, etc.) use `camelCase`. Python implementers should match this convention per layer.
+
 ## client
 
 ### LLM4AgentsClient(options)
@@ -14,7 +16,8 @@ options:
 ## chat.completions
 
 ### create(params) → ChatResponse
-### create(params, stream=true) → AsyncIterable<StreamChunk>
+### create(params) → AsyncIterable<StreamChunk>  [when params.stream === true]
+Note: `stream` is a field inside `params` (not a second argument). The two signatures represent overloads dispatched by the value of `params.stream`.
 params:
   model: string (required)
   messages: ChatMessage[] (required)
@@ -54,11 +57,13 @@ errors: model_not_found, model_disabled, insufficient_balance, context_overflow,
 
 ## chat.conversation
 
+Instantiate via `client.chat.conversation(options)` — it is a factory method on the client, not a standalone constructor. The returned object is a `Conversation` instance.
+
 ### Conversation(options)
 options:
   model: string (required)
   system: string (optional)
-  tools: Tools (optional)
+  tools: Tools (optional) — the `client.tools` object; provides getDefinitions() and sub-modules scraper, search, image
   history: ChatMessage[] (optional, default: [])
   onToolCall: (name: string, args: object) → bool | Promise<bool> (optional, return false to cancel)
   onToolResult: (name: string, result: string) → void (optional)
@@ -97,6 +102,7 @@ Returns a new Conversation with a copy of the current history (same model/system
 params:
   chain: string (required)
   token: string (required)
+errors: invalid_token, auth_error, api_error
 WalletInfo:
   chain: string
   token: string
@@ -191,6 +197,8 @@ EIP712TypedData:
 ### submit(quote: QuoteResult, privateKey: string) → TransferResult
 Signs EIP-712 typedData.permit and typedData.transferPermit with privateKey,
 then submits to the API. No on-chain gas required (gasless).
+privateKey format: hex-encoded secp256k1 key (0x-prefixed). Algorithm: EIP-712 (eth_signTypedData_v4).
+Python: use `eth_account.sign_typed_data()` from the `eth-account` library (pip install eth-account).
 TransferResult:
   txHash: string
   explorerUrl: string
@@ -241,9 +249,11 @@ params: url: string, proxy?: "none"|"datacenter"|"residential"
 
 #### scraper.screenshot(params) → string
 params: url: string, fullPage?: bool, proxy?: "none"|"datacenter"|"residential"
+Returns: base64-encoded PNG string.
 
 #### scraper.pdf(params) → string
 params: url: string, proxy?: "none"|"datacenter"|"residential"
+Returns: base64-encoded PDF string.
 
 #### scraper.extract(params) → string
 params: url: string, schema: object, proxy?: "none"|"datacenter"|"residential"
