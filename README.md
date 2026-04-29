@@ -82,6 +82,32 @@ const stream = await client.chat.completions.create({
 for await (const chunk of stream) {
   process.stdout.write(chunk.choices[0]?.delta?.content ?? '')
 }
+
+// With extended thinking
+const response = await client.chat.completions.create({
+  model: 'anthropic/claude-sonnet-4',
+  messages: [{ role: 'user', content: 'Solve step by step: 47 * 83' }],
+  reasoning: true,
+  include_reasoning: true,
+})
+
+// Force/restrict tool use
+const response = await client.chat.completions.create({
+  model: 'openai/gpt-4o',
+  messages: [...],
+  tools: await client.tools.getDefinitions(),
+  tool_choice: 'required',  // 'none' | 'auto' | 'required' | { type: 'function', function: { name: '...' } }
+})
+
+// With cancellation and metadata callback
+const controller = new AbortController()
+const response = await client.chat.completions.create(
+  { model: 'anthropic/claude-sonnet-4', messages: [...] },
+  {
+    signal: controller.signal,
+    onMeta: (meta) => console.log('Request ID:', meta.requestId),
+  },
+)
 ```
 
 ### Conversation with Tools
@@ -97,7 +123,7 @@ const conv = client.chat.conversation({
     return true       // return false to cancel the tool call
   },
   onToolResult: (name, result) => {
-    console.log(`${name} done (${result.length} chars)`)
+    console.log(`${name} done (${result.text.length} chars)`)
   },
   maxToolRounds: 5,   // default 10
 })
@@ -111,8 +137,10 @@ console.log(answer.toolCalls)   // ToolCallRecord[] of executed tools
 for await (const event of conv.stream('Now find the current price')) {
   switch (event.type) {
     case 'text':       process.stdout.write(event.content); break
+    case 'reasoning':  process.stdout.write(`<think>${event.content}</think>`); break
+    case 'meta':       console.log('Request ID:', event.meta.requestId); break
     case 'tool_start': console.log(`\n[tool] ${event.name}`); break
-    case 'tool_end':   console.log(`[done] ${event.durationMs}ms`); break
+    case 'tool_end':   console.log(`[done] ${event.result.text.slice(0, 60)} (${event.durationMs}ms)`); break
     case 'done':       console.log('\n', event.response.usage); break
   }
 }
@@ -130,6 +158,23 @@ const conv = client.chat.conversation({
   model: 'anthropic/claude-sonnet-4',
   history: savedMessages,       // rehydrate from your store
 })
+```
+
+### McpToolResult
+
+All tool calls return an `McpToolResult` instead of a plain string:
+
+```typescript
+const result = await client.tools.scraper.fetchHtml({ url: 'https://example.com' })
+
+result.text          // string — joined text from all text parts (convenience)
+result.content       // readonly McpContent[] — typed content parts
+
+for (const part of result.content) {
+  if (part.type === 'text')     console.log(part.text)
+  if (part.type === 'image')    console.log(part.mimeType, part.data.length)  // base64
+  if (part.type === 'resource') console.log(part.uri, part.text)
+}
 ```
 
 ## Wallets
@@ -182,12 +227,30 @@ console.log(result.txHash)
 ### Scraper
 
 ```typescript
-const html = await client.tools.scraper.fetchHtml({ url: 'https://example.com' })
-const md   = await client.tools.scraper.markdown({ url: 'https://example.com' })
-const shot = await client.tools.scraper.screenshot({ url: 'https://example.com', fullPage: true })
+const html  = await client.tools.scraper.fetchHtml({ url: 'https://example.com' })
+const md    = await client.tools.scraper.markdown({ url: 'https://example.com' })
+const links = await client.tools.scraper.links({ url: 'https://example.com' })
+const shot  = await client.tools.scraper.screenshot({ url: 'https://example.com', fullPage: true })
+const pdf   = await client.tools.scraper.pdf({ url: 'https://example.com' })
+const data  = await client.tools.scraper.extract({
+  url: 'https://example.com',
+  schema: { type: 'object', properties: { title: { type: 'string' } } },
+})
 ```
 
 All scraper methods accept an optional `proxy` field: `'none'`, `'datacenter'`, or `'residential'`.
+
+#### Browser sessions
+
+```typescript
+const session = await client.tools.scraper.sessionCreate({})
+const result  = await client.tools.scraper.sessionExec({
+  sessionId: session.text,
+  actions: [{ type: 'navigate', url: 'https://example.com' }],
+})
+const status  = await client.tools.scraper.sessionStatus({ sessionId: session.text })
+await client.tools.scraper.sessionClose({ sessionId: session.text })
+```
 
 ### Search
 
@@ -195,6 +258,7 @@ All scraper methods accept an optional `proxy` field: `'none'`, `'datacenter'`, 
 const results = await client.tools.search.google({ q: 'TypeScript SDK design' })
 const news    = await client.tools.search.googleNews({ q: 'Bitcoin', tbs: 'qdr:d' })
 const places  = await client.tools.search.googleMaps({ q: 'coffee near me' })
+const batch   = await client.tools.search.batchSearch({ queries: ['python', 'golang'] })
 ```
 
 ### Image
@@ -219,11 +283,16 @@ Pass these definitions to any LLM that supports function calling, or let the `co
 ## Models
 
 ```typescript
-const models = await client.models.list()
-for (const m of models) {
+const result = await client.models.list()
+for (const m of result.models) {
   console.log(`${m.slug} — $${m.inputPricePer1m}/1M in, $${m.outputPricePer1m}/1M out`)
 }
+
+// Filter by name
+const filtered = await client.models.list({ search: 'claude' })
 ```
+
+`models.list()` returns a `ModelListResult` with `.models` (array) and `.requestId` (string | undefined).
 
 ## Error Handling
 
@@ -271,6 +340,15 @@ const client = new LLM4AgentsClient({
   timeout: 30_000,                                  // optional, ms, default 30s
 })
 ```
+
+## Migration from v1.x
+
+| Before (v1) | After (v2) |
+|---|---|
+| `await tools.call(name, args)` → `string` | `result.text` (or full `McpToolResult`) |
+| `onToolResult: (name, result: string)` | `result` is now `McpToolResult` — use `result.text` |
+| `await client.models.list()` → `ModelInfo[]` | `result.models` (access via `.models`) |
+| `conv.stream()` `tool_end` event `.result: string` | `.result` is now `McpToolResult` |
 
 ## Migration from @llm4agents/gasless
 
