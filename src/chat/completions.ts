@@ -1,21 +1,46 @@
 import type { HttpTransport } from '../transport/http.js';
-import type { ChatCompletionParams, ChatResponse, StreamChunk } from './types.js';
+import type { ChatCompletionParams, ChatResponse, StreamChunk, CompletionOptions, ResponseMeta } from './types.js';
 
 export class ChatCompletions {
   constructor(private readonly http: HttpTransport) {}
 
-  async create(params: ChatCompletionParams & { stream: true }): Promise<AsyncIterable<StreamChunk>>;
-  async create(params: ChatCompletionParams & { stream?: false | undefined }): Promise<ChatResponse>;
-  async create(params: ChatCompletionParams): Promise<ChatResponse | AsyncIterable<StreamChunk>> {
+  async create(params: ChatCompletionParams & { stream: true }, options?: CompletionOptions): Promise<AsyncIterable<StreamChunk>>;
+  async create(params: ChatCompletionParams & { stream?: false | undefined }, options?: CompletionOptions): Promise<ChatResponse>;
+  async create(params: ChatCompletionParams, options?: CompletionOptions): Promise<ChatResponse | AsyncIterable<StreamChunk>> {
     if (params.stream) {
-      return this.createStream(params);
+      return this.createStream(params, options);
     }
-    return this.http.post<ChatResponse>('/v1/chat/completions', params);
+    return this.createNonStream(params, options);
   }
 
-  private async createStream(params: ChatCompletionParams): Promise<AsyncIterable<StreamChunk>> {
-    const { stream } = await this.http.postStream('/v1/chat/completions', params);
-    return this.parseSSE(stream);
+  private async createNonStream(params: ChatCompletionParams, options?: CompletionOptions): Promise<ChatResponse> {
+    const { data, headers } = await this.http.postWithMeta<ChatResponse>(
+      '/v1/chat/completions',
+      params,
+      options?.signal,
+    );
+    if (options?.onMeta) {
+      const meta: ResponseMeta = {
+        requestId: headers.get('x-request-id') ?? undefined,
+        modelUsed: headers.get('x-model-used') ?? undefined,
+        headers,
+      };
+      options.onMeta(meta);
+    }
+    return data;
+  }
+
+  private async createStream(params: ChatCompletionParams, options?: CompletionOptions): Promise<AsyncIterable<StreamChunk>> {
+    const streamResp = await this.http.postStream('/v1/chat/completions', params, options?.signal);
+    if (options?.onMeta) {
+      const meta: ResponseMeta = {
+        requestId: streamResp.requestId,
+        modelUsed: streamResp.headers.get('x-model-used') ?? undefined,
+        headers: streamResp.headers,
+      };
+      options.onMeta(meta);
+    }
+    return this.parseSSE(streamResp.stream);
   }
 
   private async *parseSSE(stream: ReadableStream<Uint8Array>): AsyncIterable<StreamChunk> {

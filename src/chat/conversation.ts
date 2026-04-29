@@ -1,5 +1,6 @@
 import type { HttpTransport } from '../transport/http.js';
 import type { Tools } from '../tools/tools.js';
+import type { McpToolResult, McpTextContent } from '../tools/types.js';
 import { LLM4AgentsError } from '../errors.js';
 import { ChatCompletions } from './completions.js';
 import type {
@@ -14,10 +15,16 @@ import type {
 
 const DEFAULT_MAX_TOOL_ROUNDS = 10;
 
+function mkTextResult(text: string): McpToolResult {
+  const content: McpTextContent = { type: 'text', text };
+  return { content: [content], text };
+}
+
 export class Conversation {
   private readonly model: string;
   private readonly system: string | undefined;
   private readonly tools: Tools | undefined;
+  private readonly signal: AbortSignal | undefined;
   private readonly onToolCall: ConversationOptions['onToolCall'];
   private readonly onToolResult: ConversationOptions['onToolResult'];
   private readonly maxToolRounds: number;
@@ -30,6 +37,7 @@ export class Conversation {
     this.model = opts.model;
     this.system = opts.system;
     this.tools = opts.tools;
+    this.signal = opts.signal;
     this.onToolCall = opts.onToolCall;
     this.onToolResult = opts.onToolResult;
     this.maxToolRounds = opts.maxToolRounds ?? DEFAULT_MAX_TOOL_ROUNDS;
@@ -56,7 +64,7 @@ export class Conversation {
         model: this.model,
         messages,
         ...(toolDefs && toolDefs.length > 0 ? { tools: toolDefs } : {}),
-      });
+      }, this.signal);
 
       totalPromptTokens += response.usage.prompt_tokens;
       totalCompletionTokens += response.usage.completion_tokens;
@@ -117,9 +125,8 @@ export class Conversation {
         messages,
         stream: true,
         ...(toolDefs && toolDefs.length > 0 ? { tools: toolDefs } : {}),
-      });
+      }, this.signal ? { signal: this.signal } : undefined);
 
-      // Accumulate the streamed response
       let streamedContent = '';
       const pendingToolCalls: Map<number, { id: string; name: string; args: string }> = new Map();
       let chunkUsage: { prompt_tokens: number; completion_tokens: number } | undefined;
@@ -129,14 +136,16 @@ export class Conversation {
         const delta = firstChoice?.delta;
         if (!delta) continue;
 
-        // Text content
+        if (delta.reasoning) {
+          yield { type: 'reasoning', content: delta.reasoning };
+        }
+
         if (delta.content) {
           streamedContent += delta.content;
           fullContent += delta.content;
           yield { type: 'text', content: delta.content };
         }
 
-        // Tool calls (streamed incrementally)
         if (delta.tool_calls) {
           for (const tc of delta.tool_calls) {
             const existing = pendingToolCalls.get(tc.index);
@@ -162,7 +171,6 @@ export class Conversation {
       totalPromptTokens += chunkUsage?.prompt_tokens ?? 0;
       totalCompletionTokens += chunkUsage?.completion_tokens ?? 0;
 
-      // Build assistant message for history
       const toolCallsArray: ToolCall[] = [...pendingToolCalls.values()].map((tc) => ({
         id: tc.id,
         type: 'function' as const,
@@ -176,7 +184,6 @@ export class Conversation {
       };
       this.history.push(assistantMessage);
 
-      // No tool calls — done
       if (toolCallsArray.length === 0) {
         yield {
           type: 'done',
@@ -193,7 +200,6 @@ export class Conversation {
         return;
       }
 
-      // Tool loop
       roundCount++;
       if (roundCount > this.maxToolRounds) {
         throw new LLM4AgentsError(
@@ -218,19 +224,22 @@ export class Conversation {
         if (this.onToolCall) {
           const shouldProceed = await this.onToolCall(name, args);
           if (!shouldProceed) {
-            this.history.push({ role: 'tool', content: 'cancelled by hook', tool_call_id: toolCall.id });
-            allToolCalls.push({ name, args, result: 'cancelled by hook', durationMs: 0 });
-            yield { type: 'tool_end', name, result: 'cancelled by hook', durationMs: 0 };
+            const cancelledResult = mkTextResult('cancelled by hook');
+            this.history.push({ role: 'tool', content: cancelledResult.text, tool_call_id: toolCall.id });
+            allToolCalls.push({ name, args, result: cancelledResult, durationMs: 0 });
+            yield { type: 'tool_end', name, result: cancelledResult, durationMs: 0 };
             continue;
           }
         }
 
         const start = Date.now();
-        let result: string;
+        let result: McpToolResult;
         try {
-          result = this.tools ? await this.tools.call(name, args) : `Tool ${name} not available`;
+          result = this.tools
+            ? await this.tools.call(name, args)
+            : mkTextResult(`Tool ${name} not available`);
         } catch (err) {
-          result = err instanceof Error ? err.message : `Tool ${name} failed`;
+          result = mkTextResult(err instanceof Error ? err.message : `Tool ${name} failed`);
         }
         const durationMs = Date.now() - start;
 
@@ -238,12 +247,11 @@ export class Conversation {
           await this.onToolResult(name, result);
         }
 
-        this.history.push({ role: 'tool', content: result, tool_call_id: toolCall.id });
+        this.history.push({ role: 'tool', content: result.text, tool_call_id: toolCall.id });
         allToolCalls.push({ name, args, result, durationMs });
         yield { type: 'tool_end', name, result, durationMs };
       }
 
-      // Reset fullContent for the next LLM round (tool results -> new text)
       fullContent = '';
     }
   }
@@ -253,16 +261,16 @@ export class Conversation {
   }
 
   fork(): Conversation {
-    const forked = new Conversation(this.http, {
+    return new Conversation(this.http, {
       model: this.model,
       system: this.system,
       tools: this.tools,
+      signal: this.signal,
       onToolCall: this.onToolCall,
       onToolResult: this.onToolResult,
       maxToolRounds: this.maxToolRounds,
       history: [...this.history],
     });
-    return forked;
   }
 
   private buildMessages(): ChatMessage[] {
@@ -286,21 +294,24 @@ export class Conversation {
     if (this.onToolCall) {
       const shouldProceed = await this.onToolCall(name, args);
       if (!shouldProceed) {
+        const cancelledResult = mkTextResult('cancelled by hook');
         this.history.push({
           role: 'tool',
-          content: 'cancelled by hook',
+          content: cancelledResult.text,
           tool_call_id: toolCall.id,
         });
-        return { name, args, result: 'cancelled by hook', durationMs: 0 };
+        return { name, args, result: cancelledResult, durationMs: 0 };
       }
     }
 
     const start = Date.now();
-    let result: string;
+    let result: McpToolResult;
     try {
-      result = this.tools ? await this.tools.call(name, args) : `Tool ${name} not available`;
+      result = this.tools
+        ? await this.tools.call(name, args)
+        : mkTextResult(`Tool ${name} not available`);
     } catch (err) {
-      result = err instanceof Error ? err.message : `Tool ${name} failed`;
+      result = mkTextResult(err instanceof Error ? err.message : `Tool ${name} failed`);
     }
     const durationMs = Date.now() - start;
 
@@ -310,7 +321,7 @@ export class Conversation {
 
     this.history.push({
       role: 'tool',
-      content: result,
+      content: result.text,
       tool_call_id: toolCall.id,
     });
 

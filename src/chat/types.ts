@@ -1,4 +1,4 @@
-import type { ToolDefinition } from '../tools/types.js';
+import type { ToolDefinition, McpToolResult } from '../tools/types.js';
 import type { Tools } from '../tools/tools.js';
 
 export interface ChatMessage {
@@ -17,6 +17,12 @@ export interface ToolCall {
   };
 }
 
+export type ToolChoice =
+  | 'none'
+  | 'auto'
+  | 'required'
+  | { readonly type: 'function'; readonly function: { readonly name: string } };
+
 export interface ChatCompletionParams {
   readonly model: string;
   readonly messages: readonly ChatMessage[];
@@ -24,6 +30,9 @@ export interface ChatCompletionParams {
   readonly max_tokens?: number | undefined;
   readonly tools?: readonly ToolDefinition[] | undefined;
   readonly stream?: boolean | undefined;
+  readonly tool_choice?: ToolChoice | undefined;
+  readonly reasoning?: boolean | undefined;
+  readonly include_reasoning?: boolean | undefined;
 }
 
 export interface ChatChoice {
@@ -35,6 +44,8 @@ export interface ChatChoice {
 export interface ChatUsage {
   readonly prompt_tokens: number;
   readonly completion_tokens: number;
+  readonly total_tokens?: number | undefined;
+  readonly reasoning_tokens?: number | undefined;
 }
 
 export interface ChatResponse {
@@ -47,6 +58,7 @@ export interface ChatResponse {
 export interface StreamDelta {
   readonly role?: string | undefined;
   readonly content?: string | undefined;
+  readonly reasoning?: string | undefined;
   readonly tool_calls?: readonly {
     readonly index: number;
     readonly id?: string | undefined;
@@ -69,16 +81,29 @@ export interface StreamChunk {
   readonly model?: string | undefined;
 }
 
+export interface ResponseMeta {
+  readonly requestId: string | undefined;
+  readonly modelUsed: string | undefined;
+  readonly headers: Headers;
+}
+
+export interface CompletionOptions {
+  readonly signal?: AbortSignal | undefined;
+  readonly onMeta?: ((meta: ResponseMeta) => void) | undefined;
+}
+
 export type StreamEvent =
   | { readonly type: 'text'; readonly content: string }
+  | { readonly type: 'reasoning'; readonly content: string }
+  | { readonly type: 'meta'; readonly meta: ResponseMeta }
   | { readonly type: 'tool_start'; readonly name: string; readonly args: Readonly<Record<string, unknown>> }
-  | { readonly type: 'tool_end'; readonly name: string; readonly result: string; readonly durationMs: number }
+  | { readonly type: 'tool_end'; readonly name: string; readonly result: McpToolResult; readonly durationMs: number }
   | { readonly type: 'done'; readonly response: ConversationResponse };
 
 export interface ToolCallRecord {
   readonly name: string;
   readonly args: Readonly<Record<string, unknown>>;
-  readonly result: string;
+  readonly result: McpToolResult;
   readonly durationMs: number;
 }
 
@@ -93,7 +118,8 @@ export interface ConversationOptions {
   readonly system?: string | undefined;
   readonly tools?: Tools | undefined;
   readonly history?: readonly ChatMessage[] | undefined;
+  readonly signal?: AbortSignal | undefined;
   readonly onToolCall?: ((name: string, args: Readonly<Record<string, unknown>>) => boolean | Promise<boolean>) | undefined;
-  readonly onToolResult?: ((name: string, result: string) => void | Promise<void>) | undefined;
+  readonly onToolResult?: ((name: string, result: McpToolResult) => void | Promise<void>) | undefined;
   readonly maxToolRounds?: number | undefined;
 }

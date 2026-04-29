@@ -7,6 +7,31 @@ export interface ToolDefinition {
   };
 }
 
+export interface McpTextContent {
+  readonly type: 'text';
+  readonly text: string;
+}
+
+export interface McpImageContent {
+  readonly type: 'image';
+  readonly data: string;
+  readonly mimeType: string;
+}
+
+export interface McpResourceContent {
+  readonly type: 'resource';
+  readonly uri: string;
+  readonly text?: string | undefined;
+  readonly mimeType?: string | undefined;
+}
+
+export type McpContent = McpTextContent | McpImageContent | McpResourceContent;
+
+export interface McpToolResult {
+  readonly content: readonly McpContent[];
+  readonly text: string;
+}
+
 export interface FetchHtmlParams {
   readonly url: string;
   readonly proxy?: 'none' | 'datacenter' | 'residential' | undefined;

@@ -1,5 +1,5 @@
 import type { McpTransport } from '../transport/mcp.js';
-import type { ToolDefinition } from './types.js';
+import type { ToolDefinition, McpToolResult } from './types.js';
 import { Scraper } from './scraper.js';
 import { Search } from './search.js';
 import { Image } from './image.js';
@@ -39,7 +39,7 @@ export class Tools {
     return this.cachedDefinitions;
   }
 
-  async call(name: string, args: Readonly<Record<string, unknown>>): Promise<string> {
+  async call(name: string, args: Readonly<Record<string, unknown>>): Promise<McpToolResult> {
     return this.mcp.callTool(name, args);
   }
 }

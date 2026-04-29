@@ -1,4 +1,5 @@
 import { LLM4AgentsError, mapHttpError } from '../errors.js';
+import type { McpContent, McpTextContent, McpToolResult } from '../tools/types.js';
 
 export interface McpTransportOptions {
   readonly mcpUrl: string;
@@ -35,27 +36,52 @@ export class McpTransport {
     return this.cachedTools;
   }
 
-  async callTool(name: string, args: object): Promise<string> {
+  async callTool(name: string, args: object): Promise<McpToolResult> {
     const response = await this.rpc<{
       isError?: boolean;
-      content: readonly { type: string; text: string }[];
+      content: readonly {
+        type: string;
+        text?: string;
+        data?: string;
+        mimeType?: string;
+        uri?: string;
+      }[];
     }>('tools/call', { name, arguments: args });
 
-    const text = response.content
-      .filter((c): c is { type: 'text'; text: string } => c.type === 'text')
-      .map((c) => c.text)
-      .join('\n');
-
     if (response.isError) {
+      const errText = response.content
+        .filter((c) => c.type === 'text')
+        .map((c) => c.text ?? '')
+        .join('\n');
       throw new LLM4AgentsError(
-        text || `Tool ${name} failed`,
+        errText || `Tool ${name} failed`,
         'tool_execution_error',
         undefined,
         undefined,
       );
     }
 
-    return text;
+    const content: McpContent[] = response.content.map((c) => {
+      if (c.type === 'image') {
+        return { type: 'image' as const, data: c.data ?? '', mimeType: c.mimeType ?? '' };
+      }
+      if (c.type === 'resource') {
+        return {
+          type: 'resource' as const,
+          uri: c.uri ?? '',
+          text: c.text,
+          mimeType: c.mimeType,
+        };
+      }
+      return { type: 'text' as const, text: c.text ?? '' };
+    });
+
+    const text = content
+      .filter((c): c is McpTextContent => c.type === 'text')
+      .map((c) => c.text)
+      .join('\n');
+
+    return { content, text };
   }
 
   private async rpc<T>(method: string, params: unknown): Promise<T> {
@@ -93,9 +119,10 @@ export class McpTransport {
 
     if ('error' in parsed && parsed['error']) {
       const errObj = parsed['error'] as { message?: string; code?: number };
+      const code = errObj.code === -32601 ? 'tool_not_found' : 'tool_execution_error';
       throw new LLM4AgentsError(
         errObj.message ?? 'MCP error',
-        'tool_execution_error',
+        code,
         undefined,
         undefined,
       );

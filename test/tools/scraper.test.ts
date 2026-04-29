@@ -24,7 +24,7 @@ describe('Scraper', () => {
   it('fetchHtml calls fetch_html tool', async () => {
     fetchSpy.mockResolvedValueOnce(mockMcpResponse('<html>Hi</html>'));
     const result = await scraper.fetchHtml({ url: 'https://example.com' });
-    expect(result).toBe('<html>Hi</html>');
+    expect(result.text).toBe('<html>Hi</html>');
     const body = JSON.parse((fetchSpy.mock.calls[0] as [string, RequestInit])[1].body as string) as Record<string, unknown>;
     expect(body['params']).toEqual({ name: 'fetch_html', arguments: { url: 'https://example.com' } });
   });
@@ -32,6 +32,6 @@ describe('Scraper', () => {
   it('screenshot calls screenshot tool', async () => {
     fetchSpy.mockResolvedValueOnce(mockMcpResponse('base64data'));
     const result = await scraper.screenshot({ url: 'https://example.com', fullPage: true });
-    expect(result).toBe('base64data');
+    expect(result.text).toBe('base64data');
   });
 });

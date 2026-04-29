@@ -24,12 +24,12 @@ describe('Image', () => {
   it('generate calls generate_image tool', async () => {
     fetchSpy.mockResolvedValueOnce(mockMcpResponse('https://img.url/result.png'));
     const result = await image.generate({ prompt: 'A robot' });
-    expect(result).toBe('https://img.url/result.png');
+    expect(result.text).toBe('https://img.url/result.png');
   });
 
   it('analyze calls analyze_image tool', async () => {
     fetchSpy.mockResolvedValueOnce(mockMcpResponse('This is a cat'));
     const result = await image.analyze({ prompt: 'What is this?', imageUrl: 'https://img.url/cat.png' });
-    expect(result).toBe('This is a cat');
+    expect(result.text).toBe('This is a cat');
   });
 });

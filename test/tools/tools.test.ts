@@ -48,7 +48,7 @@ describe('Tools.call()', () => {
       result: { content: [{ type: 'text', text: 'result' }] },
     }), { status: 200, headers: { 'content-type': 'application/json' } }));
     const result = await tools.call('google_search', { q: 'test' });
-    expect(result).toBe('result');
+    expect(result.text).toBe('result');
   });
 });
 

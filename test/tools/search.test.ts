@@ -24,7 +24,7 @@ describe('Search', () => {
   it('google calls google_search tool', async () => {
     fetchSpy.mockResolvedValueOnce(mockMcpResponse('{"results":[]}'));
     const result = await search.google({ q: 'test query' });
-    expect(result).toBe('{"results":[]}');
+    expect(result.text).toBe('{"results":[]}');
     const body = JSON.parse((fetchSpy.mock.calls[0] as [string, RequestInit])[1].body as string) as Record<string, unknown>;
     expect(body['params']).toEqual({ name: 'google_search', arguments: { q: 'test query' } });
   });

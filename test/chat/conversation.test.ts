@@ -108,7 +108,7 @@ describe('Conversation tool loop', () => {
     expect(result.content).toBe('Bitcoin is currently at $100k');
     expect(result.toolCalls).toHaveLength(1);
     expect(result.toolCalls[0]?.name).toBe('google_search');
-    expect(result.toolCalls[0]?.result).toBe('Bitcoin is at $100k');
+    expect(result.toolCalls[0]?.result.text).toBe('Bitcoin is at $100k');
   });
 
   it('calls onToolCall hook and skips when it returns false', async () => {
@@ -282,7 +282,7 @@ describe('Conversation.stream()', () => {
 
     const toolEnd = events.find((e: any) => e.type === 'tool_end') as any;
     expect(toolEnd).toBeDefined();
-    expect(toolEnd.result).toBe('BTC at $100k');
+    expect(toolEnd.result.text).toBe('BTC at $100k');
 
     const textEvents = events.filter((e: any) => e.type === 'text');
     expect(textEvents.some((e: any) => e.content.includes('Bitcoin'))).toBe(true);
@@ -317,6 +317,6 @@ describe('Conversation.stream()', () => {
 
     expect(onToolCall).toHaveBeenCalledWith('google_search', { q: 'test' });
     const toolEnd = events.find((e: any) => e.type === 'tool_end') as any;
-    expect(toolEnd.result).toBe('cancelled by hook');
+    expect(toolEnd.result.text).toBe('cancelled by hook');
   });
 });

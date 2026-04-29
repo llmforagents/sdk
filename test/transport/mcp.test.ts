@@ -85,7 +85,9 @@ describe('McpTransport.callTool()', () => {
 
     const result = await transport.callTool('fetch_html', { url: 'https://example.com' });
 
-    expect(result).toBe('<html>Hello</html>');
+    expect(result.text).toBe('<html>Hello</html>');
+    expect(result.content).toHaveLength(1);
+    expect(result.content[0]).toEqual({ type: 'text', text: '<html>Hello</html>' });
 
     const [, opts] = fetchSpy.mock.calls[0] as [string, RequestInit];
     const body = JSON.parse(opts.body as string) as Record<string, unknown>;
@@ -124,7 +126,8 @@ describe('McpTransport.callTool()', () => {
     }));
 
     const result = await transport.callTool('fetch_html', { url: '...' });
-    expect(result).toBe('');
+    expect(result.text).toBe('');
+    expect(result.content).toHaveLength(0);
   });
 
   it('increments JSON-RPC id on each call', async () => {

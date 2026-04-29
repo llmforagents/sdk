@@ -14,3 +14,12 @@ export interface ModelInfo {
   readonly contextWindow: number;
   readonly lastSyncedAt: string;
 }
+
+export interface ModelListParams {
+  readonly search?: string | undefined;
+}
+
+export interface ModelListResult {
+  readonly models: readonly ModelInfo[];
+  readonly requestId: string | undefined;
+}

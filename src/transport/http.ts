@@ -23,8 +23,8 @@ export class HttpTransport {
     this.timeout = opts.timeout;
   }
 
-  async post<T>(path: string, body: unknown): Promise<T> {
-    const { res, text } = await this.request('POST', path, body);
+  async post<T>(path: string, body: unknown, signal?: AbortSignal): Promise<T> {
+    const { res, text } = await this.request('POST', path, body, signal);
 
     if (!res.ok) {
       throw mapHttpError(res.status, text, res.headers.get('x-request-id') ?? undefined);
@@ -32,6 +32,26 @@ export class HttpTransport {
 
     try {
       return JSON.parse(text) as T;
+    } catch {
+      throw new LLM4AgentsError(
+        'Invalid JSON in API response',
+        'api_error',
+        res.status,
+        res.headers.get('x-request-id') ?? undefined,
+      );
+    }
+  }
+
+  async postWithMeta<T>(path: string, body: unknown, signal?: AbortSignal): Promise<{ data: T; headers: Headers }> {
+    const { res, text } = await this.request('POST', path, body, signal);
+
+    if (!res.ok) {
+      throw mapHttpError(res.status, text, res.headers.get('x-request-id') ?? undefined);
+    }
+
+    try {
+      const data = JSON.parse(text) as T;
+      return { data, headers: res.headers };
     } catch {
       throw new LLM4AgentsError(
         'Invalid JSON in API response',
@@ -82,7 +102,7 @@ export class HttpTransport {
     }
   }
 
-  async postStream(path: string, body: unknown): Promise<StreamResponse> {
+  async postStream(path: string, body: unknown, signal?: AbortSignal): Promise<StreamResponse> {
     let res: Response;
     try {
       res = await fetch(`${this.baseUrl}${path}`, {
@@ -92,7 +112,7 @@ export class HttpTransport {
           'authorization': `Bearer ${this.apiKey}`,
         },
         body: JSON.stringify(body),
-        signal: AbortSignal.timeout(this.timeout),
+        signal: this.buildSignal(signal),
       });
     } catch (err) {
       throw this.mapFetchError(err);
@@ -123,6 +143,7 @@ export class HttpTransport {
     method: string,
     path: string,
     body: unknown,
+    signal?: AbortSignal,
   ): Promise<{ res: Response; text: string }> {
     let res: Response;
     try {
@@ -133,7 +154,7 @@ export class HttpTransport {
           'authorization': `Bearer ${this.apiKey}`,
         },
         body: JSON.stringify(body),
-        signal: AbortSignal.timeout(this.timeout),
+        signal: this.buildSignal(signal),
       });
     } catch (err) {
       throw this.mapFetchError(err);
@@ -141,6 +162,17 @@ export class HttpTransport {
 
     const text = await res.text();
     return { res, text };
+  }
+
+  private buildSignal(userSignal?: AbortSignal): AbortSignal {
+    const timeout = AbortSignal.timeout(this.timeout);
+    if (!userSignal) return timeout;
+    // AbortSignal.any is Node 20+ / modern browsers; fall back to user signal on older runtimes
+    const any = (AbortSignal as unknown as Record<string, unknown>)['any'];
+    if (typeof any === 'function') {
+      return (any as (signals: AbortSignal[]) => AbortSignal)([timeout, userSignal]);
+    }
+    return userSignal;
   }
 
   private mapFetchError(err: unknown): LLM4AgentsError {

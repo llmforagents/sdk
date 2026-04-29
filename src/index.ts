@@ -5,12 +5,13 @@ export { LLM4AgentsClient } from './client.js';
 export { LLM4AgentsError, type ErrorCode } from './errors.js';
 
 // === Types — Config ===
-export type { ClientOptions, ModelInfo } from './types.js';
+export type { ClientOptions, ModelInfo, ModelListParams, ModelListResult } from './types.js';
 
 // === Types — Chat ===
 export type {
   ChatMessage,
   ToolCall,
+  ToolChoice,
   ChatCompletionParams,
   ChatResponse,
   ChatChoice,
@@ -18,6 +19,8 @@ export type {
   StreamChunk,
   StreamDelta,
   StreamEvent,
+  ResponseMeta,
+  CompletionOptions,
   ConversationOptions,
   ConversationResponse,
   ToolCallRecord,
@@ -46,6 +49,11 @@ export type {
 // === Types — Tools ===
 export type {
   ToolDefinition,
+  McpTextContent,
+  McpImageContent,
+  McpResourceContent,
+  McpContent,
+  McpToolResult,
   FetchHtmlParams,
   MarkdownParams,
   LinksParams,

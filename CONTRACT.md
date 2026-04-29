@@ -1,8 +1,16 @@
 # SDK Contract
 
-version: 1.0.0
+version: 2.0.0
 
 > **Naming convention:** Fields in API wire responses (ChatResponse, StreamChunk, ChatMessage, Transaction) use `snake_case` to match the OpenAI-compatible wire format. Fields in SDK wrapper objects (ConversationResponse, WalletInfo, Balance, TransferResult, etc.) use `camelCase`. Python implementers should match this convention per layer.
+
+## Breaking changes from v1.0.0
+
+- `callTool()` / all namespace tool methods (`scraper.*`, `search.*`, `image.*`, `tools.call()`): return type changed from `string` to `McpToolResult`. Access `.text` for the plain-text representation.
+- `models.list()`: return type changed from `readonly ModelInfo[]` to `ModelListResult`. Access `.models` for the array.
+- `StreamEvent.tool_end.result`: changed from `string` to `McpToolResult`.
+- `ConversationResponse.toolCalls[].result`: changed from `string` to `McpToolResult`.
+- `ConversationOptions.onToolResult`: callback signature changed from `(name, result: string)` to `(name, result: McpToolResult)`.
 
 ## client
 
@@ -15,8 +23,8 @@ options:
 
 ## chat.completions
 
-### create(params) → ChatResponse
-### create(params) → AsyncIterable<StreamChunk>  [when params.stream === true]
+### create(params, options?) → ChatResponse
+### create(params, options?) → AsyncIterable<StreamChunk>  [when params.stream === true]
 Note: `stream` is a field inside `params` (not a second argument). The two signatures represent overloads dispatched by the value of `params.stream`.
 params:
   model: string (required)
@@ -25,23 +33,34 @@ params:
   max_tokens: int (optional)
   tools: ToolDefinition[] (optional)
   stream: bool (optional, default: false)
+  tool_choice: "none"|"auto"|"required"|{ type: "function", function: { name: string } } (optional)
+  reasoning: bool (optional) — enable extended thinking
+  include_reasoning: bool (optional) — include reasoning tokens in response
+options (CompletionOptions, optional):
+  signal: AbortSignal (optional) — cancel the request
+  onMeta: (meta: ResponseMeta) → void (optional) — called with response metadata
 ChatResponse:
   id: string
   choices: ChatChoice[]
-  usage: { prompt_tokens: int, completion_tokens: int }
+  usage: { prompt_tokens: int, completion_tokens: int, total_tokens?: int, reasoning_tokens?: int }
   model: string
 ChatChoice:
   index: int
   message: ChatMessage
   finish_reason: string
+ResponseMeta:
+  requestId: string | undefined
+  modelUsed: string | undefined
+  headers: Headers
 StreamChunk:
   id: string
   choices: [{ index: int, delta: StreamDelta, finish_reason: string|null }]
-  usage: { prompt_tokens: int, completion_tokens: int } | null
+  usage: { prompt_tokens: int, completion_tokens: int, total_tokens?: int, reasoning_tokens?: int } | null
   model: string | null
 StreamDelta:
   role: string | null
   content: string | null
+  reasoning: string | null — reasoning/thinking content when extended thinking is enabled
   tool_calls: [{ index: int, id: string|null, type: string|null, function: { name: string|null, arguments: string|null }|null }] | null
 ChatMessage:
   role: "system"|"user"|"assistant"|"tool"
@@ -65,8 +84,9 @@ options:
   system: string (optional)
   tools: Tools (optional) — the `client.tools` object; provides getDefinitions() and sub-modules scraper, search, image
   history: ChatMessage[] (optional, default: [])
+  signal: AbortSignal (optional) — cancels all requests made by this conversation
   onToolCall: (name: string, args: object) → bool | Promise<bool> (optional, return false to cancel)
-  onToolResult: (name: string, result: string) → void (optional)
+  onToolResult: (name: string, result: McpToolResult) → void (optional)
   maxToolRounds: int (optional, default: 10)
 
 ### conversation.say(message: string) → ConversationResponse
@@ -77,15 +97,17 @@ ConversationResponse:
 ToolCallRecord:
   name: string
   args: object
-  result: string
+  result: McpToolResult
   durationMs: int
 errors: tool_loop_limit, + all from chat.completions
 
 ### conversation.stream(message: string) → AsyncIterable<StreamEvent>
 StreamEvent (discriminated union on `type`):
   { type: "text", content: string }
+  { type: "reasoning", content: string } — extended thinking content
+  { type: "meta", meta: ResponseMeta }
   { type: "tool_start", name: string, args: object }
-  { type: "tool_end", name: string, result: string, durationMs: int }
+  { type: "tool_end", name: string, result: McpToolResult, durationMs: int }
   { type: "done", response: ConversationResponse }
 
 ### conversation.messages → readonly ChatMessage[] (read-only getter)
@@ -153,7 +175,12 @@ Transaction:
 
 ## models
 
-### list() → ModelInfo[]
+### list(params?) → ModelListResult
+params (ModelListParams, optional):
+  search: string (optional) — filter models by name/slug
+ModelListResult:
+  models: ModelInfo[]
+  requestId: string | undefined
 ModelInfo:
   slug: string
   displayName: string
@@ -233,66 +260,73 @@ ToolDefinition:
   type: "function"
   function: { name: string, description: string, parameters: object }
 
-### call(name: string, args: object) → string
-Calls a named MCP tool with args. Returns raw string result.
+### call(name: string, args: object) → McpToolResult
+Calls a named MCP tool with args. Returns structured result.
+McpToolResult:
+  content: McpContent[] — array of content parts (text, image, or resource)
+  text: string — joined text from all text parts (convenience property)
+McpContent (discriminated union on `type`):
+  { type: "text", text: string }
+  { type: "image", data: string, mimeType: string } — base64-encoded image
+  { type: "resource", uri: string, text?: string, mimeType?: string }
 
 ### tools.scraper
 
-#### scraper.fetchHtml(params) → string
+#### scraper.fetchHtml(params) → McpToolResult
 params: url: string, proxy?: "none"|"datacenter"|"residential"
 
-#### scraper.markdown(params) → string
+#### scraper.markdown(params) → McpToolResult
 params: url: string, proxy?: "none"|"datacenter"|"residential"
 
-#### scraper.links(params) → string
+#### scraper.links(params) → McpToolResult
 params: url: string, proxy?: "none"|"datacenter"|"residential"
 
-#### scraper.screenshot(params) → string
+#### scraper.screenshot(params) → McpToolResult
 params: url: string, fullPage?: bool, proxy?: "none"|"datacenter"|"residential"
-Returns: base64-encoded PNG string.
+Returns: content includes image part (type: "image", mimeType: "image/png") with base64 data.
 
-#### scraper.pdf(params) → string
+#### scraper.pdf(params) → McpToolResult
 params: url: string, proxy?: "none"|"datacenter"|"residential"
-Returns: base64-encoded PDF string.
 
-#### scraper.extract(params) → string
+#### scraper.extract(params) → McpToolResult
 params: url: string, schema: object, proxy?: "none"|"datacenter"|"residential"
 
-#### scraper.sessionCreate(params) → string
+#### scraper.sessionCreate(params) → McpToolResult
 params: proxy?: "none"|"datacenter"|"residential", ttl?: int (seconds)
 
-#### scraper.sessionExec(params) → string
+#### scraper.sessionExec(params) → McpToolResult
 params: sessionId: string, actions: object[]
 
-#### scraper.sessionClose(params) → string
+#### scraper.sessionClose(params) → McpToolResult
 params: sessionId: string
 
-#### scraper.sessionStatus(params) → string
+#### scraper.sessionStatus(params) → McpToolResult
 params: sessionId: string
 
 ### tools.search
 
-#### search.google(params) → string
+#### search.google(params) → McpToolResult
 params: q: string, gl?: string, hl?: string, tbs?: string, page?: int, location?: string
 
-#### search.googleNews(params) → string
+#### search.googleNews(params) → McpToolResult
 params: q: string, gl?: string, hl?: string, tbs?: string, page?: int, location?: string
 
-#### search.googleMaps(params) → string
+#### search.googleMaps(params) → McpToolResult
 params: q: string, gl?: string, hl?: string, tbs?: string, page?: int, location?: string
 
-#### search.batchSearch(params) → string
+#### search.batchSearch(params) → McpToolResult
 params: queries: string[], gl?: string, hl?: string
 
 ### tools.image
 
-#### image.generate(params) → string
+#### image.generate(params) → McpToolResult
 params: prompt: string, width?: int, height?: int
+Returns: content may include image part (type: "image") when the model returns base64 image data.
 
-#### image.edit(params) → string
+#### image.edit(params) → McpToolResult
 params: prompt: string, imageUrl?: string, imageBase64?: string
 
-#### image.analyze(params) → string
+#### image.analyze(params) → McpToolResult
 params: prompt: string, imageUrl?: string, imageBase64?: string
 
 ## errors
@@ -318,6 +352,6 @@ ErrorCode values:
   invalid_token        — 422: unsupported token or chain
   operator_unavailable — 503: gasless relayer unavailable
   deadline_expired     — 400: EIP-712 permit deadline passed
-  tool_not_found       — MCP tool name not in tool list
-  tool_execution_error — MCP tool returned an error
+  tool_not_found       — MCP tool name not in tool list (-32601)
+  tool_execution_error — MCP tool returned an error or isError flag
   tool_loop_limit      — conversation exceeded maxToolRounds

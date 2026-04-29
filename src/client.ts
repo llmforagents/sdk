@@ -1,4 +1,4 @@
-import type { ClientOptions } from './types.js';
+import type { ClientOptions, ModelListParams, ModelListResult, ModelInfo } from './types.js';
 import { HttpTransport } from './transport/http.js';
 import { McpTransport } from './transport/mcp.js';
 import { ChatCompletions } from './chat/completions.js';
@@ -6,7 +6,6 @@ import { Conversation } from './chat/conversation.js';
 import { Wallets } from './wallets/wallets.js';
 import { Transfer } from './transfer/transfer.js';
 import { Tools } from './tools/tools.js';
-import type { ModelInfo } from './types.js';
 import type { ConversationOptions } from './chat/types.js';
 
 const DEFAULT_BASE_URL = 'https://api.llm4agents.com';
@@ -22,7 +21,7 @@ export class LLM4AgentsClient {
   readonly wallets: Wallets;
   readonly transfer: Transfer;
   readonly tools: Tools;
-  readonly models: { readonly list: () => Promise<readonly ModelInfo[]> };
+  readonly models: { readonly list: (params?: ModelListParams) => Promise<ModelListResult> };
 
   constructor(opts: ClientOptions) {
     const baseUrl = opts.baseUrl ?? DEFAULT_BASE_URL;
@@ -43,8 +42,11 @@ export class LLM4AgentsClient {
     this.transfer = new Transfer(http);
     this.tools = tools;
     this.models = {
-      list: () => http.get<{ models: ModelInfo[]; requestId: string }>('/api/v1/models/')
-        .then((res) => res.models),
+      list: (params?: ModelListParams) => {
+        const qs = params?.search ? { search: params.search } : undefined;
+        return http.get<{ models: ModelInfo[]; requestId: string }>('/api/v1/models/', qs)
+          .then((res) => ({ models: res.models, requestId: res.requestId }));
+      },
     };
   }
 }
