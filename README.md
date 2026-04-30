@@ -149,7 +149,8 @@ const conv = client.chat.conversation({
   onToolsIgnored: (model) => {
     console.warn(`${model} ignored the tools — model may not support function calling`)
   },
-  maxToolRounds: 5,   // default 10
+  enablePromptToolFallback: true,   // automatically retry in prompt mode when the model ignores tools
+  maxToolRounds: 5,                 // default 10
 })
 
 // Single turn
@@ -165,6 +166,7 @@ for await (const event of conv.stream('Now find the current price')) {
     case 'meta':       console.log('Request ID:', event.meta.requestId); break
     case 'tool_start': console.log(`\n[tool] ${event.name}`); break
     case 'tool_end':   console.log(`[done] ${event.result.text.slice(0, 60)} (${event.durationMs}ms)`); break
+    case 'fallback':   console.log(`\n[fallback] ${event.model} ignored tools — retrying in prompt mode`); break
     case 'done':       console.log('\n', event.response.usage); break
   }
 }
@@ -174,6 +176,10 @@ const history = conv.messages   // readonly ChatMessage[] — JSON-serializable
 conv.clear()                    // reset to empty, keeps system prompt
 const branch = conv.fork()      // copy history into a new Conversation
 ```
+
+`onToolsIgnored(model)` fires once when a model returns no tool calls on the first round despite being given tools — useful for detecting models without native function calling.
+
+`enablePromptToolFallback: true` (default `false`) goes one step further: when the model ignores tools, the SDK automatically retries that round with the tool definitions injected into the system prompt and parses `<tool_call>{"name":"...","arguments":{...}}</tool_call>` blocks from the response text, then continues the loop as if the model had emitted native tool_calls. The `stream()` consumer additionally receives a `{ type: 'fallback' }` event right before the prompt-mode tool execution begins. Costs one extra LLM round when fallback fires.
 
 To restore a conversation from a previous session:
 

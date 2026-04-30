@@ -3,6 +3,7 @@ import type { Tools } from '../tools/tools.js';
 import type { McpToolResult, McpTextContent } from '../tools/types.js';
 import { LLM4AgentsError } from '../errors.js';
 import { ChatCompletions } from './completions.js';
+import { formatToolsForPrompt, parseToolCallsFromText } from './prompt-fallback.js';
 import type {
   ChatMessage,
   ChatResponse,
@@ -30,6 +31,7 @@ export class Conversation {
   private readonly onToolResult: ConversationOptions['onToolResult'];
   private readonly onRoundMeta: ConversationOptions['onRoundMeta'];
   private readonly onToolsIgnored: ConversationOptions['onToolsIgnored'];
+  private readonly enablePromptToolFallback: boolean;
   private readonly maxToolRounds: number;
   private history: ChatMessage[];
 
@@ -45,6 +47,7 @@ export class Conversation {
     this.onToolResult = opts.onToolResult;
     this.onRoundMeta = opts.onRoundMeta;
     this.onToolsIgnored = opts.onToolsIgnored;
+    this.enablePromptToolFallback = opts.enablePromptToolFallback ?? false;
     this.maxToolRounds = opts.maxToolRounds ?? DEFAULT_MAX_TOOL_ROUNDS;
     this.history = opts.history ? [...opts.history] : [];
   }
@@ -87,9 +90,44 @@ export class Conversation {
       this.history.push(assistantMessage);
 
       if (!assistantMessage.tool_calls || assistantMessage.tool_calls.length === 0) {
-        if (roundCount === 0 && toolDefs && toolDefs.length > 0 && this.onToolsIgnored) {
+        const ignoredTools = roundCount === 0 && toolDefs && toolDefs.length > 0;
+        if (ignoredTools && this.onToolsIgnored) {
           this.onToolsIgnored(this.model);
         }
+
+        // Prompt-mode fallback: retry round 0 with tools described in system prompt
+        if (ignoredTools && this.enablePromptToolFallback) {
+          const fallbackResult = await this.runPromptFallbackRound(toolDefs);
+          totalPromptTokens += fallbackResult.usage.promptTokens;
+          totalCompletionTokens += fallbackResult.usage.completionTokens;
+
+          if (fallbackResult.toolCalls.length > 0) {
+            // Replace the ignored assistant message with the prompt-mode one
+            this.history.pop(); // remove the failed first attempt
+            this.history.push(fallbackResult.assistantMessage);
+
+            for (const toolCall of fallbackResult.toolCalls) {
+              const record = await this.executeToolCall(toolCall);
+              allToolCalls.push(record);
+            }
+            roundCount++;
+            continue;
+          }
+
+          // Fallback also produced no tool calls — return prompt-mode text
+          this.history.pop();
+          this.history.push(fallbackResult.assistantMessage);
+          return {
+            content: fallbackResult.textWithoutBlocks,
+            toolCalls: allToolCalls,
+            usage: {
+              promptTokens: totalPromptTokens,
+              completionTokens: totalCompletionTokens,
+              totalTokens: totalPromptTokens + totalCompletionTokens,
+            },
+          };
+        }
+
         const rawContent = assistantMessage.content;
         const contentStr = typeof rawContent === 'string' ? rawContent : '';
         return {
@@ -236,9 +274,79 @@ export class Conversation {
       this.history.push(assistantMessage);
 
       if (toolCallsArray.length === 0) {
-        if (roundCount === 0 && toolDefs && toolDefs.length > 0 && this.onToolsIgnored) {
+        const ignoredTools = roundCount === 0 && toolDefs && toolDefs.length > 0;
+        if (ignoredTools && this.onToolsIgnored) {
           this.onToolsIgnored(this.model);
         }
+
+        // Prompt-mode fallback: retry round 0 with tools described in system prompt
+        if (ignoredTools && this.enablePromptToolFallback) {
+          yield { type: 'fallback', reason: 'tools_ignored', model: this.model };
+
+          this.history.pop(); // remove the failed first attempt
+          const fallbackResult = await this.runPromptFallbackRound(toolDefs);
+          totalPromptTokens += fallbackResult.usage.promptTokens;
+          totalCompletionTokens += fallbackResult.usage.completionTokens;
+          this.history.push(fallbackResult.assistantMessage);
+
+          if (fallbackResult.toolCalls.length === 0) {
+            yield { type: 'text', content: fallbackResult.textWithoutBlocks };
+            yield {
+              type: 'done',
+              response: {
+                content: fallbackResult.textWithoutBlocks,
+                toolCalls: allToolCalls,
+                usage: {
+                  promptTokens: totalPromptTokens,
+                  completionTokens: totalCompletionTokens,
+                  totalTokens: totalPromptTokens + totalCompletionTokens,
+                },
+              },
+            };
+            return;
+          }
+
+          // Execute parsed tool calls and continue the loop
+          for (const toolCall of fallbackResult.toolCalls) {
+            const name = toolCall.function.name;
+            let args: Readonly<Record<string, unknown>>;
+            try {
+              args = JSON.parse(toolCall.function.arguments) as Record<string, unknown>;
+            } catch {
+              args = {};
+            }
+            yield { type: 'tool_start', name, args };
+
+            if (this.onToolCall) {
+              const proceed = await this.onToolCall(name, args);
+              if (!proceed) {
+                const cancelled = mkTextResult('cancelled by hook');
+                this.history.push({ role: 'tool', content: cancelled.text, tool_call_id: toolCall.id });
+                allToolCalls.push({ name, args, result: cancelled, durationMs: 0 });
+                yield { type: 'tool_end', name, result: cancelled, durationMs: 0 };
+                continue;
+              }
+            }
+
+            const start = Date.now();
+            const result = this.tools
+              ? await this.tools.call(name, args, this.signal)
+              : mkTextResult(`Tool ${name} not available`);
+            const durationMs = Date.now() - start;
+
+            if (this.onToolResult) {
+              await this.onToolResult(name, result);
+            }
+            this.history.push({ role: 'tool', content: result.text, tool_call_id: toolCall.id });
+            allToolCalls.push({ name, args, result, durationMs });
+            yield { type: 'tool_end', name, result, durationMs };
+          }
+
+          roundCount++;
+          fullContent = '';
+          continue;
+        }
+
         yield {
           type: 'done',
           response: {
@@ -352,6 +460,7 @@ export class Conversation {
       maxToolRounds: this.maxToolRounds,
       onRoundMeta: this.onRoundMeta,
       onToolsIgnored: this.onToolsIgnored,
+      enablePromptToolFallback: this.enablePromptToolFallback,
       history: [...this.history],
     });
   }
@@ -405,6 +514,58 @@ export class Conversation {
     });
 
     return { name, args, result, durationMs };
+  }
+
+  private async runPromptFallbackRound(toolDefs: readonly import('../tools/types.js').ToolDefinition[]): Promise<{
+    readonly assistantMessage: ChatMessage;
+    readonly toolCalls: readonly ToolCall[];
+    readonly textWithoutBlocks: string;
+    readonly usage: { readonly promptTokens: number; readonly completionTokens: number };
+  }> {
+    const promptToolsBlock = formatToolsForPrompt(toolDefs);
+    const augmentedSystem = this.system
+      ? `${this.system}\n\n${promptToolsBlock}`
+      : promptToolsBlock;
+
+    const messages: ChatMessage[] = [
+      { role: 'system', content: augmentedSystem },
+      ...this.history,
+    ];
+
+    const { data: response, headers } = await this.http.postWithMeta<ChatResponse>(
+      '/v1/chat/completions',
+      { model: this.model, messages },
+      this.signal,
+    );
+
+    if (this.onRoundMeta) {
+      this.onRoundMeta(buildRoundMeta(headers));
+    }
+
+    const choice = response.choices[0];
+    if (!choice) {
+      throw new LLM4AgentsError('Empty fallback response from LLM', 'api_error', undefined, undefined);
+    }
+
+    const rawContent = choice.message.content;
+    const text = typeof rawContent === 'string' ? rawContent : '';
+    const { toolCalls, textWithoutBlocks } = parseToolCallsFromText(text);
+
+    const assistantMessage: ChatMessage = {
+      role: 'assistant',
+      content: textWithoutBlocks || null,
+      ...(toolCalls.length > 0 ? { tool_calls: [...toolCalls] } : {}),
+    };
+
+    return {
+      assistantMessage,
+      toolCalls,
+      textWithoutBlocks,
+      usage: {
+        promptTokens: response.usage.prompt_tokens,
+        completionTokens: response.usage.completion_tokens,
+      },
+    };
   }
 }
 
