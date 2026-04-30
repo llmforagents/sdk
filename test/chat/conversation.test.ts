@@ -4,7 +4,7 @@ import { HttpTransport } from '../../src/transport/http.js';
 import { McpTransport } from '../../src/transport/mcp.js';
 import { Tools } from '../../src/tools/tools.js';
 import { LLM4AgentsError } from '../../src/errors.js';
-import type { ResponseMeta } from '../../src/chat/types.js';
+import type { ResponseMeta, StreamEvent } from '../../src/chat/types.js';
 
 const API_KEY = 'sk-proxy-test-key';
 const BASE_URL = 'https://api.test.com';
@@ -423,5 +423,95 @@ describe('Conversation — image short-circuit', () => {
 
     expect(result.toolCalls).toHaveLength(1);
     expect(result.toolCalls[0]?.result.content.some(c => c.type === 'image')).toBe(true);
+  });
+});
+
+describe('Conversation.stream() — meta events', () => {
+  function chatStreamRespWithHeaders(content: string): Response {
+    const lines = [
+      `data: ${JSON.stringify({ id: 'c1', choices: [{ delta: { role: 'assistant', content }, index: 0, finish_reason: null }], model: 'test-model' })}`,
+      `data: ${JSON.stringify({ id: 'c1', choices: [{ delta: {}, index: 0, finish_reason: 'stop' }], usage: { prompt_tokens: 10, completion_tokens: 5 }, model: 'test-model' })}`,
+      'data: [DONE]',
+    ].join('\n');
+    return new Response(lines, {
+      status: 200,
+      headers: {
+        'content-type': 'text/event-stream',
+        'x-request-id': 'req_stream_1',
+        'x-cost-usd-cents': '9',
+        'x-balance-remaining-cents': '4991',
+        'x-model-used': 'test-model',
+      },
+    });
+  }
+
+  it('stream() emits meta event per LLM round with cost headers', async () => {
+    fetchSpy.mockResolvedValueOnce(mcpToolsList());
+    fetchSpy.mockResolvedValueOnce(chatStreamRespWithHeaders('Done'));
+
+    const metaEvents: ResponseMeta[] = [];
+    const conv = new Conversation(http, {
+      model: 'test-model',
+      tools,
+      onRoundMeta: (meta) => { metaEvents.push(meta); },
+    });
+
+    const events: StreamEvent[] = [];
+    for await (const event of conv.stream('Hi')) {
+      events.push(event);
+    }
+
+    // There should be at least one meta event
+    const metaFromStream = events.filter(e => e.type === 'meta');
+    expect(metaFromStream.length).toBeGreaterThanOrEqual(1);
+    const firstMeta = metaFromStream[0];
+    if (firstMeta?.type === 'meta') {
+      expect(firstMeta.meta.costUsdCents).toBe(9);
+      expect(firstMeta.meta.balanceRemainingCents).toBe(4991);
+    }
+
+    // onRoundMeta callback should also have been called
+    expect(metaEvents.length).toBeGreaterThanOrEqual(1);
+    expect(metaEvents[0]?.costUsdCents).toBe(9);
+  });
+});
+
+describe('Conversation — onToolsIgnored callback', () => {
+  it('calls onToolsIgnored when model responds without tool_calls despite tools being provided', async () => {
+    fetchSpy
+      .mockResolvedValueOnce(mcpToolsList())
+      .mockResolvedValueOnce(chatResponse('Direct answer without using tools'));
+
+    let ignoredModel: string | undefined;
+    const conv = new Conversation(http, {
+      model: 'some-model-without-function-calling',
+      tools,
+      onToolsIgnored: (model) => { ignoredModel = model; },
+    });
+
+    const result = await conv.say('What is the weather?');
+    expect(result.content).toBe('Direct answer without using tools');
+    expect(ignoredModel).toBe('some-model-without-function-calling');
+  });
+
+  it('does NOT call onToolsIgnored when tools are used', async () => {
+    fetchSpy
+      .mockResolvedValueOnce(mcpToolsList())
+      .mockResolvedValueOnce(chatResponse('', [{
+        id: 'tc-1', type: 'function',
+        function: { name: 'google_search', arguments: '{"q":"test"}' },
+      }]))
+      .mockResolvedValueOnce(mcpResponse('results'))
+      .mockResolvedValueOnce(chatResponse('Done'));
+
+    let wasCalled = false;
+    const conv = new Conversation(http, {
+      model: 'test-model',
+      tools,
+      onToolsIgnored: () => { wasCalled = true; },
+    });
+
+    await conv.say('Search something');
+    expect(wasCalled).toBe(false);
   });
 });

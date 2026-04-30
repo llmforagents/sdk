@@ -29,6 +29,7 @@ export class Conversation {
   private readonly onToolCall: ConversationOptions['onToolCall'];
   private readonly onToolResult: ConversationOptions['onToolResult'];
   private readonly onRoundMeta: ConversationOptions['onRoundMeta'];
+  private readonly onToolsIgnored: ConversationOptions['onToolsIgnored'];
   private readonly maxToolRounds: number;
   private history: ChatMessage[];
 
@@ -43,6 +44,7 @@ export class Conversation {
     this.onToolCall = opts.onToolCall;
     this.onToolResult = opts.onToolResult;
     this.onRoundMeta = opts.onRoundMeta;
+    this.onToolsIgnored = opts.onToolsIgnored;
     this.maxToolRounds = opts.maxToolRounds ?? DEFAULT_MAX_TOOL_ROUNDS;
     this.history = opts.history ? [...opts.history] : [];
   }
@@ -85,6 +87,9 @@ export class Conversation {
       this.history.push(assistantMessage);
 
       if (!assistantMessage.tool_calls || assistantMessage.tool_calls.length === 0) {
+        if (roundCount === 0 && toolDefs && toolDefs.length > 0 && this.onToolsIgnored) {
+          this.onToolsIgnored(this.model);
+        }
         const rawContent = assistantMessage.content;
         const contentStr = typeof rawContent === 'string' ? rawContent : '';
         return {
@@ -155,12 +160,16 @@ export class Conversation {
       const toolDefs = this.tools ? await this.tools.getDefinitions() : undefined;
       const messages = this.buildMessages();
 
+      let roundMeta: ResponseMeta | undefined;
       const chunks = await completions.create({
         model: this.model,
         messages,
         stream: true,
         ...(toolDefs && toolDefs.length > 0 ? { tools: toolDefs } : {}),
-      }, this.signal ? { signal: this.signal } : undefined);
+      }, {
+        signal: this.signal,
+        onMeta: (meta) => { roundMeta = meta; },
+      });
 
       let streamedContent = '';
       const pendingToolCalls: Map<number, { id: string; name: string; args: string }> = new Map();
@@ -206,6 +215,13 @@ export class Conversation {
       totalPromptTokens += chunkUsage?.prompt_tokens ?? 0;
       totalCompletionTokens += chunkUsage?.completion_tokens ?? 0;
 
+      if (roundMeta !== undefined) {
+        yield { type: 'meta', meta: roundMeta };
+        if (this.onRoundMeta) {
+          this.onRoundMeta(roundMeta);
+        }
+      }
+
       const toolCallsArray: ToolCall[] = [...pendingToolCalls.values()].map((tc) => ({
         id: tc.id,
         type: 'function' as const,
@@ -220,6 +236,9 @@ export class Conversation {
       this.history.push(assistantMessage);
 
       if (toolCallsArray.length === 0) {
+        if (roundCount === 0 && toolDefs && toolDefs.length > 0 && this.onToolsIgnored) {
+          this.onToolsIgnored(this.model);
+        }
         yield {
           type: 'done',
           response: {
@@ -332,6 +351,7 @@ export class Conversation {
       onToolResult: this.onToolResult,
       maxToolRounds: this.maxToolRounds,
       onRoundMeta: this.onRoundMeta,
+      onToolsIgnored: this.onToolsIgnored,
       history: [...this.history],
     });
   }
