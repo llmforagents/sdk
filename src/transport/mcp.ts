@@ -1,6 +1,59 @@
 import { LLM4AgentsError, mapHttpError } from '../errors.js';
 import type { McpContent, McpTextContent, McpToolResult } from '../tools/types.js';
 
+function extractText(c: Readonly<Record<string, unknown>>): string {
+  const raw = c['text'];
+  if (typeof raw === 'string') return raw;
+  if (raw !== null && typeof raw === 'object') {
+    const wrapped = raw as Record<string, unknown>;
+    if (typeof wrapped['text'] === 'string') return wrapped['text'];
+  }
+  return '';
+}
+
+function normalizeContent(c: Readonly<Record<string, unknown>>): McpContent {
+  const type = c['type'];
+
+  if (type === 'image') {
+    const data =
+      (typeof c['data'] === 'string' ? c['data'] : undefined) ??
+      (typeof c['imageBase64'] === 'string' ? c['imageBase64'] : undefined) ??
+      (typeof c['pngBase64'] === 'string' ? c['pngBase64'] : undefined) ??
+      (typeof c['pdfBase64'] === 'string' ? c['pdfBase64'] : undefined) ??
+      '';
+    const mimeType =
+      (typeof c['mimeType'] === 'string' ? c['mimeType'] : undefined) ??
+      (typeof c['mime_type'] === 'string' ? c['mime_type'] : undefined) ??
+      sniffMimeType(data);
+    return { type: 'image', data, mimeType };
+  }
+
+  if (type === 'resource') {
+    const mimeType =
+      (typeof c['mimeType'] === 'string' ? c['mimeType'] : undefined) ??
+      (typeof c['mime_type'] === 'string' ? c['mime_type'] : undefined);
+    return {
+      type: 'resource',
+      uri: typeof c['uri'] === 'string' ? c['uri'] : '',
+      text: typeof c['text'] === 'string' ? c['text'] : undefined,
+      mimeType,
+    };
+  }
+
+  // default: text
+  return { type: 'text', text: extractText(c) };
+}
+
+function sniffMimeType(base64: string): string {
+  const prefix = base64.slice(0, 4);
+  if (prefix === 'iVBO') return 'image/png';
+  if (prefix === '/9j/') return 'image/jpeg';
+  if (prefix === 'JVBE') return 'application/pdf';
+  if (prefix === 'R0lG') return 'image/gif';
+  if (prefix === 'UklG') return 'image/webp';
+  return 'application/octet-stream';
+}
+
 export interface McpTransportOptions {
   readonly mcpUrl: string;
   readonly apiKey: string;
@@ -39,19 +92,13 @@ export class McpTransport {
   async callTool(name: string, args: object): Promise<McpToolResult> {
     const response = await this.rpc<{
       isError?: boolean;
-      content: readonly {
-        type: string;
-        text?: string;
-        data?: string;
-        mimeType?: string;
-        uri?: string;
-      }[];
+      content: readonly Readonly<Record<string, unknown>>[];
     }>('tools/call', { name, arguments: args });
 
     if (response.isError) {
-      const errText = response.content
-        .filter((c) => c.type === 'text')
-        .map((c) => c.text ?? '')
+      const errText = (response.content as readonly Record<string, unknown>[])
+        .filter((c) => c['type'] === 'text')
+        .map((c) => extractText(c))
         .join('\n');
       throw new LLM4AgentsError(
         errText || `Tool ${name} failed`,
@@ -61,27 +108,14 @@ export class McpTransport {
       );
     }
 
-    const content: McpContent[] = response.content.map((c) => {
-      if (c.type === 'image') {
-        return { type: 'image' as const, data: c.data ?? '', mimeType: c.mimeType ?? '' };
-      }
-      if (c.type === 'resource') {
-        return {
-          type: 'resource' as const,
-          uri: c.uri ?? '',
-          text: c.text,
-          mimeType: c.mimeType,
-        };
-      }
-      return { type: 'text' as const, text: c.text ?? '' };
-    });
-
+    const raw = response.content;
+    const content: McpContent[] = raw.map((c) => normalizeContent(c));
     const text = content
       .filter((c): c is McpTextContent => c.type === 'text')
       .map((c) => c.text)
       .join('\n');
 
-    return { content, text };
+    return { content, text, raw };
   }
 
   private async rpc<T>(method: string, params: unknown): Promise<T> {

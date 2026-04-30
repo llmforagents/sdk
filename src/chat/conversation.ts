@@ -17,7 +17,7 @@ const DEFAULT_MAX_TOOL_ROUNDS = 10;
 
 function mkTextResult(text: string): McpToolResult {
   const content: McpTextContent = { type: 'text', text };
-  return { content: [content], text };
+  return { content: [content], text, raw: [] };
 }
 
 export class Conversation {

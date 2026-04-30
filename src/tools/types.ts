@@ -30,6 +30,7 @@ export type McpContent = McpTextContent | McpImageContent | McpResourceContent;
 export interface McpToolResult {
   readonly content: readonly McpContent[];
   readonly text: string;
+  readonly raw: readonly Readonly<Record<string, unknown>>[];
 }
 
 export interface FetchHtmlParams {

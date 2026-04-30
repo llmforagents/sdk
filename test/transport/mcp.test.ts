@@ -143,3 +143,91 @@ describe('McpTransport.callTool()', () => {
     expect(body2['id']).toBe(2);
   });
 });
+
+describe('McpTransport.callTool() — field normalization', () => {
+  it('normalizes mime_type (snake_case) to mimeType on image content', async () => {
+    fetchSpy.mockResolvedValueOnce(mockResponse({
+      result: {
+        content: [{
+          type: 'image',
+          data: 'base64abc',
+          mime_type: 'image/png',  // snake_case — non-standard
+        }],
+      },
+    }));
+
+    const result = await transport.callTool('screenshot', { url: 'https://example.com' });
+
+    expect(result.content).toHaveLength(1);
+    const part = result.content[0];
+    expect(part?.type).toBe('image');
+    if (part?.type === 'image') {
+      expect(part.mimeType).toBe('image/png');
+      expect(part.data).toBe('base64abc');
+    }
+  });
+
+  it('normalizes imageBase64 field to data on image content', async () => {
+    fetchSpy.mockResolvedValueOnce(mockResponse({
+      result: {
+        content: [{
+          type: 'image',
+          imageBase64: 'base64xyz',
+          mimeType: 'image/png',
+        }],
+      },
+    }));
+
+    const result = await transport.callTool('generate_image', { prompt: 'cat' });
+    const part = result.content[0];
+    expect(part?.type).toBe('image');
+    if (part?.type === 'image') {
+      expect(part.data).toBe('base64xyz');
+    }
+  });
+
+  it('normalizes pngBase64 field to data', async () => {
+    fetchSpy.mockResolvedValueOnce(mockResponse({
+      result: {
+        content: [{ type: 'image', pngBase64: 'base64png', mimeType: 'image/png' }],
+      },
+    }));
+
+    const result = await transport.callTool('screenshot', {});
+    const part = result.content[0];
+    if (part?.type === 'image') {
+      expect(part.data).toBe('base64png');
+    }
+  });
+
+  it('unwraps {text, costCents} wrapper in text content', async () => {
+    fetchSpy.mockResolvedValueOnce(mockResponse({
+      result: {
+        content: [{
+          type: 'text',
+          text: { text: 'Search results here', costCents: 1 },
+        }],
+      },
+    }));
+
+    const result = await transport.callTool('google_search', { q: 'test' });
+    expect(result.text).toBe('Search results here');
+    const part = result.content[0];
+    expect(part?.type).toBe('text');
+    if (part?.type === 'text') {
+      expect(part.text).toBe('Search results here');
+    }
+  });
+
+  it('exposes raw MCP content before normalization on result.raw', async () => {
+    const rawContent = [{ type: 'image', pngBase64: 'abc', mime_type: 'image/png' }];
+    fetchSpy.mockResolvedValueOnce(mockResponse({
+      result: { content: rawContent },
+    }));
+
+    const result = await transport.callTool('screenshot', {});
+    expect(result.raw).toHaveLength(1);
+    expect((result.raw[0] as Record<string, unknown>)['pngBase64']).toBe('abc');
+    expect((result.raw[0] as Record<string, unknown>)['mime_type']).toBe('image/png');
+  });
+});
