@@ -41,7 +41,7 @@ describe('Wallets.generate()', () => {
 });
 
 describe('Wallets.balance()', () => {
-  it('gets /api/v1/balance/', async () => {
+  it('gets /api/v1/balance', async () => {
     fetchSpy.mockResolvedValueOnce(mockResponse({
       uuid: 'agent-1', availableUsdCents: 1250, availableUsd: '12.50',
       totalDepositedUsd: '20.00', totalSpentUsd: '7.50',
@@ -52,12 +52,12 @@ describe('Wallets.balance()', () => {
     expect(result.availableUsd).toBe('12.50');
     expect(result.wallets).toHaveLength(1);
     const [url] = fetchSpy.mock.calls[0] as [string];
-    expect(url).toBe(`${BASE_URL}/api/v1/balance/`);
+    expect(url).toBe(`${BASE_URL}/api/v1/balance`);
   });
 });
 
 describe('Wallets.transactions()', () => {
-  it('gets /api/v1/transactions/ with query params', async () => {
+  it('gets /api/v1/transactions with query params', async () => {
     fetchSpy.mockResolvedValueOnce(mockResponse({
       transactions: [{ id: 1, type: 'deposit', amountUsdCents: 500, model: null, promptTokens: null, completionTokens: null, totalTokens: null, chain: 'polygon', txHash: '0x123', description: 'Deposit', createdAt: '2026-01-01' }],
       limit: 20, offset: 0, total: 1, requestId: 'req_3',
@@ -76,7 +76,7 @@ describe('Wallets.transactions()', () => {
     }));
     await wallets.transactions();
     const [url] = fetchSpy.mock.calls[0] as [string];
-    expect(url).toBe(`${BASE_URL}/api/v1/transactions/`);
+    expect(url).toBe(`${BASE_URL}/api/v1/transactions`);
   });
 });
 

@@ -47,8 +47,12 @@ export class LLM4AgentsClient {
     this.models = {
       list: (params?: ModelListParams) => {
         const qs = params?.search ? { search: params.search } : undefined;
-        return http.get<{ models: ModelInfo[]; requestId: string }>('/api/v1/models/', qs)
-          .then((res) => ({ models: res.models, requestId: res.requestId }));
+        return http.get<{ models: ModelInfo[]; requestId: string; feePct?: number }>('/api/v1/models', qs)
+          .then((res) => ({
+            models: res.models,
+            requestId: res.requestId,
+            ...(res.feePct !== undefined ? { feePct: res.feePct } : {}),
+          }));
       },
     };
   }

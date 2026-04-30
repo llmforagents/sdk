@@ -311,6 +311,28 @@ describe('McpTransport.callTool() — JSON-in-text unwrap', () => {
   });
 });
 
+describe('McpTransport — Accept header (BUG-01 regression)', () => {
+  it('sends Accept: application/json, text/event-stream on every rpc call', async () => {
+    fetchSpy.mockResolvedValueOnce(mockResponse(MOCK_TOOLS_RESPONSE));
+    await transport.listTools();
+
+    const callArgs = fetchSpy.mock.calls[0];
+    const init = callArgs?.[1] as RequestInit;
+    const headers = init.headers as Record<string, string>;
+    expect(headers['accept']).toBe('application/json, text/event-stream');
+  });
+
+  it('sends Accept header on tools/call too', async () => {
+    fetchSpy.mockResolvedValueOnce(mockResponse(MOCK_CALL_RESPONSE));
+    await transport.callTool('google_search', { q: 'test' });
+
+    const callArgs = fetchSpy.mock.calls[0];
+    const init = callArgs?.[1] as RequestInit;
+    const headers = init.headers as Record<string, string>;
+    expect(headers['accept']).toBe('application/json, text/event-stream');
+  });
+});
+
 describe('McpTransport.callTool() — abort signal', () => {
   it('aborts the fetch when signal is triggered', async () => {
     const controller = new AbortController();

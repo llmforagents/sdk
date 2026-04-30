@@ -104,12 +104,21 @@ export interface ResponseMeta {
   readonly balanceRemainingCents: number | undefined;
   readonly tokensInput: number | undefined;
   readonly tokensOutput: number | undefined;
+  readonly tokensReasoning: number | undefined;
   readonly headers: Headers;
+}
+
+export interface FinalUsage {
+  readonly promptTokens: number;
+  readonly completionTokens: number;
+  readonly totalTokens: number;
+  readonly reasoningTokens?: number | undefined;
 }
 
 export interface CompletionOptions {
   readonly signal?: AbortSignal | undefined;
   readonly onMeta?: ((meta: ResponseMeta) => void) | undefined;
+  readonly onFinalUsage?: ((usage: FinalUsage) => void) | undefined;
 }
 
 export type StreamEvent =
@@ -131,7 +140,12 @@ export interface ToolCallRecord {
 export interface ConversationResponse {
   readonly content: string;
   readonly toolCalls: readonly ToolCallRecord[];
-  readonly usage: { readonly promptTokens: number; readonly completionTokens: number; readonly totalTokens: number };
+  readonly usage: {
+    readonly promptTokens: number;
+    readonly completionTokens: number;
+    readonly totalTokens: number;
+    readonly reasoningTokens?: number | undefined;
+  };
 }
 
 export interface ConversationOptions {

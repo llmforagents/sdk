@@ -117,13 +117,18 @@ const response = await client.chat.completions.create({
   tool_choice: 'required',  // 'none' | 'auto' | 'required' | { type: 'function', function: { name: '...' } }
 })
 
-// With cancellation and metadata callback
+// With cancellation, header metadata, and final usage from streaming
 const controller = new AbortController()
-const response = await client.chat.completions.create(
-  { model: 'anthropic/claude-sonnet-4', messages: [...] },
+const stream = await client.chat.completions.create(
+  { model: 'anthropic/claude-sonnet-4', messages: [...], stream: true },
   {
     signal: controller.signal,
     onMeta: (meta) => console.log('Request ID:', meta.requestId),
+    // Fires when the SSE stream emits its final usage chunk (some providers send
+    // include_usage=true). Use this for accurate token counts in streaming mode,
+    // since cost-related response headers are sent before the body and don't
+    // reflect the final token totals.
+    onFinalUsage: (u) => console.log(`tokens: ${u.totalTokens} (reasoning: ${u.reasoningTokens ?? 0})`),
   },
 )
 ```
@@ -157,6 +162,7 @@ const conv = client.chat.conversation({
 const answer = await conv.say('Search for Bitcoin news and summarize the top 3')
 console.log(answer.content)
 console.log(answer.toolCalls)   // ToolCallRecord[] of executed tools
+console.log(answer.usage)       // { promptTokens, completionTokens, totalTokens, reasoningTokens? }
 
 // Streaming conversation
 for await (const event of conv.stream('Now find the current price')) {
@@ -338,7 +344,7 @@ for (const m of result.models) {
 const filtered = await client.models.list({ search: 'claude' })
 ```
 
-`models.list()` returns a `ModelListResult` with `.models` (array) and `.requestId` (string | undefined).
+`models.list()` returns a `ModelListResult` with `.models` (array), `.requestId` (string | undefined), and `.feePct` (number | undefined — the platform fee percentage applied as a default for models that don't override it).
 
 ## Error Handling
 

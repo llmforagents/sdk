@@ -83,6 +83,39 @@ describe('ChatCompletions.create() streaming', () => {
 
     expect(chunks.length).toBeGreaterThanOrEqual(2);
   });
+
+  it('fires onFinalUsage when stream completes with usage chunk', async () => {
+    const sseData = [
+      'data: {"id":"c1","choices":[{"index":0,"delta":{"content":"Hi"},"finish_reason":null}]}\n\n',
+      'data: {"id":"c1","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":42,"completion_tokens":7,"reasoning_tokens":15}}\n\n',
+      'data: [DONE]\n\n',
+    ].join('');
+
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(sseData));
+        controller.close();
+      },
+    });
+
+    fetchSpy.mockResolvedValueOnce(new Response(stream, {
+      status: 200,
+      headers: { 'content-type': 'text/event-stream' },
+    }));
+
+    let finalUsage: { promptTokens: number; completionTokens: number; totalTokens: number; reasoningTokens?: number } | undefined;
+    const result = await chat.create(
+      { model: 'm', messages: [{ role: 'user', content: 'Hi' }], stream: true },
+      { onFinalUsage: (u) => { finalUsage = u; } },
+    );
+    for await (const _chunk of result) { /* drain */ }
+
+    expect(finalUsage).toBeDefined();
+    expect(finalUsage?.promptTokens).toBe(42);
+    expect(finalUsage?.completionTokens).toBe(7);
+    expect(finalUsage?.totalTokens).toBe(49);
+    expect(finalUsage?.reasoningTokens).toBe(15);
+  });
 });
 
 describe('ChatCompletionParams models[] fallback', () => {

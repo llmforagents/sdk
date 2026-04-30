@@ -18,7 +18,7 @@ export class Wallets {
   }
 
   async balance(): Promise<Balance> {
-    return this.http.get<Balance>('/api/v1/balance/');
+    return this.http.get<Balance>('/api/v1/balance');
   }
 
   async transactions(filter?: TransactionFilter): Promise<TransactionList> {
@@ -28,6 +28,6 @@ export class Wallets {
     if (filter?.offset !== undefined) params['offset'] = String(filter.offset);
 
     const hasParams = Object.keys(params).length > 0;
-    return this.http.get<TransactionList>('/api/v1/transactions/', hasParams ? params : undefined);
+    return this.http.get<TransactionList>('/api/v1/transactions', hasParams ? params : undefined);
   }
 }
