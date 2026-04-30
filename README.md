@@ -146,6 +146,9 @@ const conv = client.chat.conversation({
   onRoundMeta: (meta) => {
     console.log(`Round cost: $${(meta.costUsdCents ?? 0) / 100}, balance: $${(meta.balanceRemainingCents ?? 0) / 100}`)
   },
+  onToolsIgnored: (model) => {
+    console.warn(`${model} ignored the tools — model may not support function calling`)
+  },
   maxToolRounds: 5,   // default 10
 })
 
@@ -197,6 +200,8 @@ for (const part of result.content) {
   if (part.type === 'resource') console.log(part.uri, part.text)
 }
 ```
+
+The MCP transport auto-normalizes raw responses: snake_case `mime_type` is aliased to `mimeType`, `imageBase64` / `pngBase64` keys are mapped to `data`, MIME types are sniffed from base64 magic bytes when missing, and JSON-wrapped image/PDF payloads embedded inside text blocks (e.g. `{"imageBase64": "...", "mimeType": "image/png"}`) are auto-promoted to typed `McpImageContent` / `McpResourceContent`.
 
 ## Agents
 
@@ -250,6 +255,7 @@ const quote = await client.transfer.quote({
   from: '0xSender...', to: '0xRecipient...', amount: '10.50',
 })
 console.log(`Fee: ${quote.feeFormatted}`)
+console.log(`Forwarder: ${quote.forwarderAddress}`)  // EIP-2771 forwarder used for the transfer
 
 const result = await client.transfer.submit(quote, '0xPrivateKey...')
 console.log(result.txHash)
@@ -319,6 +325,7 @@ Pass these definitions to any LLM that supports function calling, or let the `co
 const result = await client.models.list()
 for (const m of result.models) {
   console.log(`${m.slug} — $${m.inputPricePer1M}/1M in, $${m.outputPricePer1M}/1M out`)
+  if (m.feePct !== undefined) console.log(`  platform fee: ${m.feePct}%`)
 }
 
 // Filter by name
