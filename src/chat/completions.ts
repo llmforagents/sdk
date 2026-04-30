@@ -15,6 +15,7 @@ function buildMeta(headers: Headers): ResponseMeta {
     balanceRemainingCents: parseIntHeader('x-balance-remaining-cents'),
     tokensInput: parseIntHeader('x-tokens-input'),
     tokensOutput: parseIntHeader('x-tokens-output'),
+    tokensReasoning: parseIntHeader('x-tokens-reasoning'),
     headers,
   };
 }
@@ -48,13 +49,14 @@ export class ChatCompletions {
     if (options?.onMeta) {
       options.onMeta(buildMeta(streamResp.headers));
     }
-    return this.parseSSE(streamResp.stream);
+    return this.parseSSE(streamResp.stream, options);
   }
 
-  private async *parseSSE(stream: ReadableStream<Uint8Array>): AsyncIterable<StreamChunk> {
+  private async *parseSSE(stream: ReadableStream<Uint8Array>, options?: CompletionOptions): AsyncIterable<StreamChunk> {
     const reader = stream.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
+    let lastUsage: StreamChunk['usage'] | undefined;
 
     try {
       while (true) {
@@ -70,14 +72,35 @@ export class ChatCompletions {
           const trimmed = line.trim();
           if (!trimmed || !trimmed.startsWith('data: ')) continue;
           const data = trimmed.slice(6);
-          if (data === '[DONE]') return;
+          if (data === '[DONE]') {
+            if (lastUsage && options?.onFinalUsage) {
+              options.onFinalUsage({
+                promptTokens: lastUsage.prompt_tokens,
+                completionTokens: lastUsage.completion_tokens,
+                totalTokens: lastUsage.prompt_tokens + lastUsage.completion_tokens,
+                ...(lastUsage.reasoning_tokens !== undefined ? { reasoningTokens: lastUsage.reasoning_tokens } : {}),
+              });
+            }
+            return;
+          }
 
           try {
-            yield JSON.parse(data) as StreamChunk;
+            const chunk = JSON.parse(data) as StreamChunk;
+            if (chunk.usage) lastUsage = chunk.usage;
+            yield chunk;
           } catch {
             // skip malformed SSE lines
           }
         }
+      }
+
+      if (lastUsage && options?.onFinalUsage) {
+        options.onFinalUsage({
+          promptTokens: lastUsage.prompt_tokens,
+          completionTokens: lastUsage.completion_tokens,
+          totalTokens: lastUsage.prompt_tokens + lastUsage.completion_tokens,
+          ...(lastUsage.reasoning_tokens !== undefined ? { reasoningTokens: lastUsage.reasoning_tokens } : {}),
+        });
       }
     } finally {
       reader.releaseLock();

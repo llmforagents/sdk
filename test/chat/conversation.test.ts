@@ -516,6 +516,34 @@ describe('Conversation — onToolsIgnored callback', () => {
   });
 });
 
+describe('Conversation — reasoning tokens propagation (BUG-03)', () => {
+  it('say() propagates reasoning_tokens into ConversationResponse.usage.reasoningTokens', async () => {
+    const sayResponse = new Response(JSON.stringify({
+      id: 'c1',
+      choices: [{ index: 0, message: { role: 'assistant', content: 'thoughtful answer' }, finish_reason: 'stop' }],
+      usage: { prompt_tokens: 12, completion_tokens: 4, reasoning_tokens: 90 },
+      model: 'reasoning-model',
+    }), { status: 200, headers: { 'content-type': 'application/json' } });
+    fetchSpy.mockResolvedValueOnce(sayResponse);
+
+    const conv = new Conversation(http, { model: 'reasoning-model' });
+    const result = await conv.say('think hard');
+
+    expect(result.usage.promptTokens).toBe(12);
+    expect(result.usage.completionTokens).toBe(4);
+    expect(result.usage.reasoningTokens).toBe(90);
+  });
+
+  it('say() omits reasoningTokens when not present', async () => {
+    fetchSpy.mockResolvedValueOnce(chatResponse('plain'));
+
+    const conv = new Conversation(http, { model: 'plain-model' });
+    const result = await conv.say('hi');
+
+    expect(result.usage.reasoningTokens).toBeUndefined();
+  });
+});
+
 describe('Conversation — enablePromptToolFallback', () => {
   it('say(): retries in prompt mode and executes tool calls parsed from text', async () => {
     fetchSpy

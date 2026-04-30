@@ -179,6 +179,7 @@ export class McpTransport {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
+          'accept': 'application/json, text/event-stream',
           'authorization': `Bearer ${this.apiKey}`,
         },
         body: JSON.stringify({ jsonrpc: '2.0', id: this.nextId++, method, params }),

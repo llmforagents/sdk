@@ -23,4 +23,5 @@ export interface ModelListParams {
 export interface ModelListResult {
   readonly models: readonly ModelInfo[];
   readonly requestId: string | undefined;
+  readonly feePct?: number | undefined;
 }

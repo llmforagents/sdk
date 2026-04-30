@@ -62,6 +62,7 @@ export class Conversation {
     const allToolCalls: ToolCallRecord[] = [];
     let totalPromptTokens = 0;
     let totalCompletionTokens = 0;
+    let totalReasoningTokens = 0;
     let roundCount = 0;
 
     while (true) {
@@ -80,6 +81,9 @@ export class Conversation {
 
       totalPromptTokens += response.usage.prompt_tokens;
       totalCompletionTokens += response.usage.completion_tokens;
+      if (response.usage.reasoning_tokens !== undefined) {
+        totalReasoningTokens += response.usage.reasoning_tokens;
+      }
 
       const choice = response.choices[0];
       if (!choice) {
@@ -100,6 +104,9 @@ export class Conversation {
           const fallbackResult = await this.runPromptFallbackRound(toolDefs);
           totalPromptTokens += fallbackResult.usage.promptTokens;
           totalCompletionTokens += fallbackResult.usage.completionTokens;
+          if (fallbackResult.usage.reasoningTokens !== undefined) {
+            totalReasoningTokens += fallbackResult.usage.reasoningTokens;
+          }
 
           if (fallbackResult.toolCalls.length > 0) {
             // Replace the ignored assistant message with the prompt-mode one
@@ -124,6 +131,7 @@ export class Conversation {
               promptTokens: totalPromptTokens,
               completionTokens: totalCompletionTokens,
               totalTokens: totalPromptTokens + totalCompletionTokens,
+              ...(totalReasoningTokens > 0 ? { reasoningTokens: totalReasoningTokens } : {}),
             },
           };
         }
@@ -137,6 +145,7 @@ export class Conversation {
             promptTokens: totalPromptTokens,
             completionTokens: totalCompletionTokens,
             totalTokens: totalPromptTokens + totalCompletionTokens,
+            ...(totalReasoningTokens > 0 ? { reasoningTokens: totalReasoningTokens } : {}),
           },
         };
       }
@@ -178,6 +187,7 @@ export class Conversation {
             promptTokens: totalPromptTokens,
             completionTokens: totalCompletionTokens,
             totalTokens: totalPromptTokens + totalCompletionTokens,
+            ...(totalReasoningTokens > 0 ? { reasoningTokens: totalReasoningTokens } : {}),
           },
         };
       }
@@ -190,6 +200,7 @@ export class Conversation {
     const allToolCalls: ToolCallRecord[] = [];
     let totalPromptTokens = 0;
     let totalCompletionTokens = 0;
+    let totalReasoningTokens = 0;
     let roundCount = 0;
     let fullContent = '';
     const completions = new ChatCompletions(this.http);
@@ -211,7 +222,7 @@ export class Conversation {
 
       let streamedContent = '';
       const pendingToolCalls: Map<number, { id: string; name: string; args: string }> = new Map();
-      let chunkUsage: { prompt_tokens: number; completion_tokens: number } | undefined;
+      let chunkUsage: { prompt_tokens: number; completion_tokens: number; reasoning_tokens?: number | undefined } | undefined;
 
       for await (const chunk of chunks) {
         const firstChoice = chunk.choices[0];
@@ -252,6 +263,9 @@ export class Conversation {
 
       totalPromptTokens += chunkUsage?.prompt_tokens ?? 0;
       totalCompletionTokens += chunkUsage?.completion_tokens ?? 0;
+      if (chunkUsage?.reasoning_tokens !== undefined) {
+        totalReasoningTokens += chunkUsage.reasoning_tokens;
+      }
 
       if (roundMeta !== undefined) {
         yield { type: 'meta', meta: roundMeta };
@@ -287,6 +301,9 @@ export class Conversation {
           const fallbackResult = await this.runPromptFallbackRound(toolDefs);
           totalPromptTokens += fallbackResult.usage.promptTokens;
           totalCompletionTokens += fallbackResult.usage.completionTokens;
+          if (fallbackResult.usage.reasoningTokens !== undefined) {
+            totalReasoningTokens += fallbackResult.usage.reasoningTokens;
+          }
           this.history.push(fallbackResult.assistantMessage);
 
           if (fallbackResult.toolCalls.length === 0) {
@@ -300,6 +317,7 @@ export class Conversation {
                   promptTokens: totalPromptTokens,
                   completionTokens: totalCompletionTokens,
                   totalTokens: totalPromptTokens + totalCompletionTokens,
+                  ...(totalReasoningTokens > 0 ? { reasoningTokens: totalReasoningTokens } : {}),
                 },
               },
             };
@@ -356,6 +374,7 @@ export class Conversation {
               promptTokens: totalPromptTokens,
               completionTokens: totalCompletionTokens,
               totalTokens: totalPromptTokens + totalCompletionTokens,
+              ...(totalReasoningTokens > 0 ? { reasoningTokens: totalReasoningTokens } : {}),
             },
           },
         };
@@ -435,6 +454,7 @@ export class Conversation {
               promptTokens: totalPromptTokens,
               completionTokens: totalCompletionTokens,
               totalTokens: totalPromptTokens + totalCompletionTokens,
+              ...(totalReasoningTokens > 0 ? { reasoningTokens: totalReasoningTokens } : {}),
             },
           },
         };
@@ -520,7 +540,7 @@ export class Conversation {
     readonly assistantMessage: ChatMessage;
     readonly toolCalls: readonly ToolCall[];
     readonly textWithoutBlocks: string;
-    readonly usage: { readonly promptTokens: number; readonly completionTokens: number };
+    readonly usage: { readonly promptTokens: number; readonly completionTokens: number; readonly reasoningTokens?: number | undefined };
   }> {
     const promptToolsBlock = formatToolsForPrompt(toolDefs);
     const augmentedSystem = this.system
@@ -564,6 +584,7 @@ export class Conversation {
       usage: {
         promptTokens: response.usage.prompt_tokens,
         completionTokens: response.usage.completion_tokens,
+        ...(response.usage.reasoning_tokens !== undefined ? { reasoningTokens: response.usage.reasoning_tokens } : {}),
       },
     };
   }
@@ -583,6 +604,7 @@ function buildRoundMeta(headers: Headers): ResponseMeta {
     balanceRemainingCents: parseIntHeader('x-balance-remaining-cents'),
     tokensInput: parseIntHeader('x-tokens-input'),
     tokensOutput: parseIntHeader('x-tokens-output'),
+    tokensReasoning: parseIntHeader('x-tokens-reasoning'),
     headers,
   };
 }
