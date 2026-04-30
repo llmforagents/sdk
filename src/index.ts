@@ -10,6 +10,9 @@ export type { ClientOptions, ModelInfo, ModelListParams, ModelListResult } from 
 // === Types — Chat ===
 export type {
   ChatMessage,
+  ContentPart,
+  TextContentPart,
+  ImageUrlContentPart,
   ToolCall,
   ToolChoice,
   ChatCompletionParams,

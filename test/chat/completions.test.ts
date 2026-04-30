@@ -105,6 +105,35 @@ describe('ChatCompletionParams models[] fallback', () => {
   });
 });
 
+describe('ChatCompletions multimodal content', () => {
+  it('sends array content parts for vision requests', async () => {
+    fetchSpy.mockResolvedValueOnce(mockResponse({
+      id: 'chatcmpl-1',
+      choices: [{ index: 0, message: { role: 'assistant', content: 'A cat.' }, finish_reason: 'stop' }],
+      usage: { prompt_tokens: 100, completion_tokens: 5 },
+      model: 'openai/gpt-4o',
+    }));
+
+    await chat.create({
+      model: 'openai/gpt-4o',
+      messages: [{
+        role: 'user',
+        content: [
+          { type: 'text', text: 'What is in this image?' },
+          { type: 'image_url', image_url: { url: 'https://example.com/cat.png' } },
+        ],
+      }],
+    });
+
+    const body = JSON.parse((fetchSpy.mock.calls[0] as [string, RequestInit])[1].body as string) as Record<string, unknown>;
+    const msgs = body['messages'] as unknown[];
+    const firstMsg = msgs[0] as Record<string, unknown>;
+    expect(Array.isArray(firstMsg['content'])).toBe(true);
+    const parts = firstMsg['content'] as unknown[];
+    expect(parts).toHaveLength(2);
+  });
+});
+
 describe('ResponseMeta cost headers', () => {
   it('exposes X-Cost-Usd-Cents and X-Balance-Remaining-Cents as typed fields', async () => {
     fetchSpy.mockResolvedValueOnce(new Response(JSON.stringify({

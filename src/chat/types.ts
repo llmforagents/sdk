@@ -1,9 +1,21 @@
 import type { ToolDefinition, McpToolResult } from '../tools/types.js';
 import type { Tools } from '../tools/tools.js';
 
+export interface TextContentPart {
+  readonly type: 'text';
+  readonly text: string;
+}
+
+export interface ImageUrlContentPart {
+  readonly type: 'image_url';
+  readonly image_url: { readonly url: string };
+}
+
+export type ContentPart = TextContentPart | ImageUrlContentPart;
+
 export interface ChatMessage {
   readonly role: 'system' | 'user' | 'assistant' | 'tool';
-  readonly content: string | null;
+  readonly content: string | readonly ContentPart[] | null;
   readonly tool_calls?: readonly ToolCall[] | undefined;
   readonly tool_call_id?: string | undefined;
 }

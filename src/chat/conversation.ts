@@ -78,8 +78,10 @@ export class Conversation {
       this.history.push(assistantMessage);
 
       if (!assistantMessage.tool_calls || assistantMessage.tool_calls.length === 0) {
+        const rawContent = assistantMessage.content;
+        const contentStr = typeof rawContent === 'string' ? rawContent : '';
         return {
-          content: assistantMessage.content ?? '',
+          content: contentStr,
           toolCalls: allToolCalls,
           usage: {
             promptTokens: totalPromptTokens,
