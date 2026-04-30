@@ -39,7 +39,7 @@ export class Tools {
     return this.cachedDefinitions;
   }
 
-  async call(name: string, args: Readonly<Record<string, unknown>>): Promise<McpToolResult> {
-    return this.mcp.callTool(name, args);
+  async call(name: string, args: Readonly<Record<string, unknown>>, signal?: AbortSignal): Promise<McpToolResult> {
+    return this.mcp.callTool(name, args, signal);
   }
 }

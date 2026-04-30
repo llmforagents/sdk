@@ -89,11 +89,11 @@ export class McpTransport {
     return this.cachedTools;
   }
 
-  async callTool(name: string, args: object): Promise<McpToolResult> {
+  async callTool(name: string, args: object, signal?: AbortSignal): Promise<McpToolResult> {
     const response = await this.rpc<{
       isError?: boolean;
       content: readonly Readonly<Record<string, unknown>>[];
-    }>('tools/call', { name, arguments: args });
+    }>('tools/call', { name, arguments: args }, signal);
 
     if (response.isError) {
       const errText = (response.content as readonly Record<string, unknown>[])
@@ -118,7 +118,14 @@ export class McpTransport {
     return { content, text, raw };
   }
 
-  private async rpc<T>(method: string, params: unknown): Promise<T> {
+  private async rpc<T>(method: string, params: unknown, signal?: AbortSignal): Promise<T> {
+    const timeout = AbortSignal.timeout(this.timeout);
+    const combinedSignal = signal
+      ? (typeof (AbortSignal as unknown as Record<string, unknown>)['any'] === 'function'
+          ? (AbortSignal as unknown as { any: (sigs: AbortSignal[]) => AbortSignal }).any([timeout, signal])
+          : signal)
+      : timeout;
+
     let res: Response;
     try {
       res = await fetch(this.mcpUrl, {
@@ -128,7 +135,7 @@ export class McpTransport {
           'authorization': `Bearer ${this.apiKey}`,
         },
         body: JSON.stringify({ jsonrpc: '2.0', id: this.nextId++, method, params }),
-        signal: AbortSignal.timeout(this.timeout),
+        signal: combinedSignal,
       });
     } catch (err) {
       if (err instanceof DOMException && err.name === 'AbortError') {

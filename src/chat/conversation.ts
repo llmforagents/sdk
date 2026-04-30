@@ -238,7 +238,7 @@ export class Conversation {
         let result: McpToolResult;
         try {
           result = this.tools
-            ? await this.tools.call(name, args)
+            ? await this.tools.call(name, args, this.signal)
             : mkTextResult(`Tool ${name} not available`);
         } catch (err) {
           result = mkTextResult(err instanceof Error ? err.message : `Tool ${name} failed`);
@@ -310,7 +310,7 @@ export class Conversation {
     let result: McpToolResult;
     try {
       result = this.tools
-        ? await this.tools.call(name, args)
+        ? await this.tools.call(name, args, this.signal)
         : mkTextResult(`Tool ${name} not available`);
     } catch (err) {
       result = mkTextResult(err instanceof Error ? err.message : `Tool ${name} failed`);

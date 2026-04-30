@@ -231,3 +231,21 @@ describe('McpTransport.callTool() — field normalization', () => {
     expect((result.raw[0] as Record<string, unknown>)['mime_type']).toBe('image/png');
   });
 });
+
+describe('McpTransport.callTool() — abort signal', () => {
+  it('aborts the fetch when signal is triggered', async () => {
+    const controller = new AbortController();
+    fetchSpy.mockImplementationOnce((_url: string, opts: RequestInit) => {
+      return new Promise<Response>((_resolve, reject) => {
+        opts.signal?.addEventListener('abort', () => {
+          reject(new DOMException('The operation was aborted.', 'AbortError'));
+        });
+        setTimeout(() => controller.abort(), 0);
+      });
+    });
+
+    await expect(
+      transport.callTool('fetch_html', { url: 'https://example.com' }, controller.signal),
+    ).rejects.toThrow(LLM4AgentsError);
+  });
+});
