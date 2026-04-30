@@ -4,6 +4,7 @@ import { HttpTransport } from '../../src/transport/http.js';
 import { McpTransport } from '../../src/transport/mcp.js';
 import { Tools } from '../../src/tools/tools.js';
 import { LLM4AgentsError } from '../../src/errors.js';
+import type { ResponseMeta } from '../../src/chat/types.js';
 
 const API_KEY = 'sk-proxy-test-key';
 const BASE_URL = 'https://api.test.com';
@@ -86,6 +87,39 @@ describe('Conversation.say()', () => {
     const body = JSON.parse(opts.body as string) as { messages: { role: string; content: string }[] };
     expect(body.messages[0]?.role).toBe('system');
     expect(body.messages[0]?.content).toBe('You are helpful');
+  });
+
+  it('calls onRoundMeta with cost headers on each LLM round', async () => {
+    function chatRespWithHeaders(content: string): Response {
+      return new Response(JSON.stringify({
+        id: 'c1',
+        choices: [{ index: 0, message: { role: 'assistant', content }, finish_reason: 'stop' }],
+        usage: { prompt_tokens: 10, completion_tokens: 5 },
+        model: 'test-model',
+      }), {
+        status: 200,
+        headers: {
+          'content-type': 'application/json',
+          'x-request-id': 'req_1',
+          'x-cost-usd-cents': '7',
+          'x-balance-remaining-cents': '5000',
+          'x-model-used': 'test-model',
+        },
+      });
+    }
+
+    fetchSpy.mockResolvedValueOnce(chatRespWithHeaders('Done'));
+
+    const roundMetas: ResponseMeta[] = [];
+    const conv = new Conversation(http, {
+      model: 'test-model',
+      onRoundMeta: (meta) => { roundMetas.push(meta); },
+    });
+    await conv.say('Hi');
+
+    expect(roundMetas).toHaveLength(1);
+    expect(roundMetas[0]?.costUsdCents).toBe(7);
+    expect(roundMetas[0]?.balanceRemainingCents).toBe(5000);
   });
 });
 

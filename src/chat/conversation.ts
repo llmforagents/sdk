@@ -8,6 +8,7 @@ import type {
   ChatResponse,
   ConversationOptions,
   ConversationResponse,
+  ResponseMeta,
   ToolCallRecord,
   ToolCall,
   StreamEvent,
@@ -27,6 +28,7 @@ export class Conversation {
   private readonly signal: AbortSignal | undefined;
   private readonly onToolCall: ConversationOptions['onToolCall'];
   private readonly onToolResult: ConversationOptions['onToolResult'];
+  private readonly onRoundMeta: ConversationOptions['onRoundMeta'];
   private readonly maxToolRounds: number;
   private history: ChatMessage[];
 
@@ -40,6 +42,7 @@ export class Conversation {
     this.signal = opts.signal;
     this.onToolCall = opts.onToolCall;
     this.onToolResult = opts.onToolResult;
+    this.onRoundMeta = opts.onRoundMeta;
     this.maxToolRounds = opts.maxToolRounds ?? DEFAULT_MAX_TOOL_ROUNDS;
     this.history = opts.history ? [...opts.history] : [];
   }
@@ -60,11 +63,15 @@ export class Conversation {
       const toolDefs = this.tools ? await this.tools.getDefinitions() : undefined;
       const messages = this.buildMessages();
 
-      const response = await this.http.post<ChatResponse>('/v1/chat/completions', {
+      const { data: response, headers } = await this.http.postWithMeta<ChatResponse>('/v1/chat/completions', {
         model: this.model,
         messages,
         ...(toolDefs && toolDefs.length > 0 ? { tools: toolDefs } : {}),
       }, this.signal);
+
+      if (this.onRoundMeta) {
+        this.onRoundMeta(buildRoundMeta(headers));
+      }
 
       totalPromptTokens += response.usage.prompt_tokens;
       totalCompletionTokens += response.usage.completion_tokens;
@@ -271,6 +278,7 @@ export class Conversation {
       onToolCall: this.onToolCall,
       onToolResult: this.onToolResult,
       maxToolRounds: this.maxToolRounds,
+      onRoundMeta: this.onRoundMeta,
       history: [...this.history],
     });
   }
@@ -329,4 +337,22 @@ export class Conversation {
 
     return { name, args, result, durationMs };
   }
+}
+
+function buildRoundMeta(headers: Headers): ResponseMeta {
+  const parseIntHeader = (name: string): number | undefined => {
+    const val = headers.get(name);
+    if (val === null) return undefined;
+    const n = parseInt(val, 10);
+    return isNaN(n) ? undefined : n;
+  };
+  return {
+    requestId: headers.get('x-request-id') ?? undefined,
+    modelUsed: headers.get('x-model-used') ?? undefined,
+    costUsdCents: parseIntHeader('x-cost-usd-cents'),
+    balanceRemainingCents: parseIntHeader('x-balance-remaining-cents'),
+    tokensInput: parseIntHeader('x-tokens-input'),
+    tokensOutput: parseIntHeader('x-tokens-output'),
+    headers,
+  };
 }
