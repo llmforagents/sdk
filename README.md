@@ -91,6 +91,24 @@ const response = await client.chat.completions.create({
   include_reasoning: true,
 })
 
+// Model fallback routing — tries primary first, falls back on error
+const response = await client.chat.completions.create({
+  models: ['anthropic/claude-sonnet-4', 'openai/gpt-4o'],
+  messages: [{ role: 'user', content: 'Hello' }],
+})
+
+// Vision (multimodal) input
+const analysis = await client.chat.completions.create({
+  model: 'openai/gpt-4o',
+  messages: [{
+    role: 'user',
+    content: [
+      { type: 'text', text: 'What is in this image?' },
+      { type: 'image_url', image_url: { url: 'https://example.com/image.png' } },
+    ],
+  }],
+})
+
 // Force/restrict tool use
 const response = await client.chat.completions.create({
   model: 'openai/gpt-4o',
@@ -124,6 +142,9 @@ const conv = client.chat.conversation({
   },
   onToolResult: (name, result) => {
     console.log(`${name} done (${result.text.length} chars)`)
+  },
+  onRoundMeta: (meta) => {
+    console.log(`Round cost: $${(meta.costUsdCents ?? 0) / 100}, balance: $${(meta.balanceRemainingCents ?? 0) / 100}`)
   },
   maxToolRounds: 5,   // default 10
 })
@@ -177,6 +198,18 @@ for (const part of result.content) {
 }
 ```
 
+## Agents
+
+```typescript
+// Register a new agent — unauthenticated, call before you have an API key
+const client = new LLM4AgentsClient({ apiKey: '' }) // empty key is fine for registration
+const reg = await client.agents.register({ name: 'My Agent' })
+// The returned apiKey is shown only once — save it immediately
+console.log(reg.apiKey)           // sk-proxy-...
+console.log(reg.depositDeadline)  // fund before this or the agent is deleted (15 min)
+console.log(reg.notice)           // human-readable reminder
+```
+
 ## Wallets
 
 ```typescript
@@ -196,7 +229,7 @@ for (const tx of txs.transactions) {
 }
 ```
 
-`TransactionFilter.type` accepts `'deposit'`, `'usage'`, or `'refund'`.
+`TransactionFilter.type` accepts `'deposit'`, `'usage'`, `'refund'`, or `'gas_sponsored'`.
 
 ## Gasless Transfers
 
@@ -285,7 +318,7 @@ Pass these definitions to any LLM that supports function calling, or let the `co
 ```typescript
 const result = await client.models.list()
 for (const m of result.models) {
-  console.log(`${m.slug} — $${m.inputPricePer1m}/1M in, $${m.outputPricePer1m}/1M out`)
+  console.log(`${m.slug} — $${m.inputPricePer1M}/1M in, $${m.outputPricePer1M}/1M out`)
 }
 
 // Filter by name
@@ -349,6 +382,15 @@ const client = new LLM4AgentsClient({
 | `onToolResult: (name, result: string)` | `result` is now `McpToolResult` — use `result.text` |
 | `await client.models.list()` → `ModelInfo[]` | `result.models` (access via `.models`) |
 | `conv.stream()` `tool_end` event `.result: string` | `.result` is now `McpToolResult` |
+
+**v2.0.1 → v2.1.0**
+
+| Before (v2.0.1) | After (v2.1.0) |
+|---|---|
+| `model.inputPricePer1m` | `model.inputPricePer1M` (capital M) |
+| `model.outputPricePer1m` | `model.outputPricePer1M` (capital M) |
+| Tool errors silenced as text | Tool errors throw `LLM4AgentsError` |
+| `gas_sponsored` missing from transaction filter | `type: 'gas_sponsored'` now valid |
 
 ## Migration from @llm4agents/gasless
 

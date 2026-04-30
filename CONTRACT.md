@@ -1,6 +1,6 @@
 # SDK Contract
 
-version: 2.0.0
+version: 2.1.0
 
 > **Naming convention:** Fields in API wire responses (ChatResponse, StreamChunk, ChatMessage, Transaction) use `snake_case` to match the OpenAI-compatible wire format. Fields in SDK wrapper objects (ConversationResponse, WalletInfo, Balance, TransferResult, etc.) use `camelCase`. Python implementers should match this convention per layer.
 
@@ -26,8 +26,10 @@ options:
 ### create(params, options?) → ChatResponse
 ### create(params, options?) → AsyncIterable<StreamChunk>  [when params.stream === true]
 Note: `stream` is a field inside `params` (not a second argument). The two signatures represent overloads dispatched by the value of `params.stream`.
+Note: `model` and `models` are mutually exclusive — send one or the other, never both.
 params:
-  model: string (required)
+  model: string (mutually exclusive with `models`) — single model
+  models: string[] (mutually exclusive with `model`, 2-3 slugs) — fallback routing: tries primary first, falls back on error
   messages: ChatMessage[] (required)
   temperature: float (optional)
   max_tokens: int (optional)
@@ -52,6 +54,10 @@ ResponseMeta:
   requestId: string | undefined
   modelUsed: string | undefined
   headers: Headers
+  costUsdCents: number | undefined — X-Cost-Usd-Cents header
+  balanceRemainingCents: number | undefined — X-Balance-Remaining-Cents header
+  tokensInput: number | undefined — X-Tokens-Input header
+  tokensOutput: number | undefined — X-Tokens-Output header
 StreamChunk:
   id: string
   choices: [{ index: int, delta: StreamDelta, finish_reason: string|null }]
@@ -64,9 +70,12 @@ StreamDelta:
   tool_calls: [{ index: int, id: string|null, type: string|null, function: { name: string|null, arguments: string|null }|null }] | null
 ChatMessage:
   role: "system"|"user"|"assistant"|"tool"
-  content: string | null
+  content: string | ContentPart[] | null  — string for text-only, ContentPart[] for multimodal (vision)
   tool_calls: ToolCall[] | null
   tool_call_id: string | null
+ContentPart (discriminated union on `type`):
+  { type: "text", text: string }
+  { type: "image_url", image_url: { url: string } }
 ToolCall:
   id: string
   type: "function"
@@ -87,6 +96,7 @@ options:
   signal: AbortSignal (optional) — cancels all requests made by this conversation
   onToolCall: (name: string, args: object) → bool | Promise<bool> (optional, return false to cancel)
   onToolResult: (name: string, result: McpToolResult) → void (optional)
+  onRoundMeta: (meta: ResponseMeta) → void (optional) — called after each LLM round with cost/balance headers
   maxToolRounds: int (optional, default: 10)
 
 ### conversation.say(message: string) → ConversationResponse
@@ -151,7 +161,7 @@ WalletBalance:
 
 ### transactions(filter?) → TransactionList
 filter:
-  type: "deposit"|"usage"|"refund" (optional)
+  type: "deposit"|"usage"|"refund"|"gas_sponsored" (optional)
   limit: int (optional)
   offset: int (optional)
 TransactionList:
@@ -185,8 +195,8 @@ ModelInfo:
   slug: string
   displayName: string
   provider: string
-  inputPricePer1m: float
-  outputPricePer1m: float
+  inputPricePer1M: float
+  outputPricePer1M: float
   contextWindow: int
   lastSyncedAt: string (ISO 8601)
 
@@ -265,6 +275,7 @@ Calls a named MCP tool with args. Returns structured result.
 McpToolResult:
   content: McpContent[] — array of content parts (text, image, or resource)
   text: string — joined text from all text parts (convenience property)
+  raw: readonly Record<string, unknown>[] — original MCP response content before normalization
 McpContent (discriminated union on `type`):
   { type: "text", text: string }
   { type: "image", data: string, mimeType: string } — base64-encoded image
@@ -329,6 +340,22 @@ params: prompt: string, imageUrl?: string, imageBase64?: string
 #### image.analyze(params) → McpToolResult
 params: prompt: string, imageUrl?: string, imageBase64?: string
 
+## client.agents
+
+### register(params) → AgentRegistration
+params:
+  name: string (required)
+AgentRegistration:
+  uuid: string
+  apiKey: string — save immediately, shown only once
+  name: string
+  createdAt: string (ISO 8601)
+  requestId: string
+  depositDeadline: string (ISO 8601)
+  depositRequiredWithinMinutes: number
+  notice: string
+errors: api_error (400), rate_limited (429)
+
 ## errors
 
 ### LLM4AgentsError
@@ -355,3 +382,10 @@ ErrorCode values:
   tool_not_found       — MCP tool name not in tool list (-32601)
   tool_execution_error — MCP tool returned an error or isError flag
   tool_loop_limit      — conversation exceeded maxToolRounds
+
+## Breaking changes in v2.1.0
+
+- `ModelInfo.inputPricePer1m` renamed to `inputPricePer1M` — matches API response
+- `ModelInfo.outputPricePer1m` renamed to `outputPricePer1M` — matches API response
+- `ChatCompletionParams` changed from `interface` to `type` (discriminated union) — backwards-compatible
+- Conversation tool errors now throw `LLM4AgentsError` instead of being passed as text to the LLM
