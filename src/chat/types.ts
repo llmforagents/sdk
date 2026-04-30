@@ -118,6 +118,7 @@ export type StreamEvent =
   | { readonly type: 'meta'; readonly meta: ResponseMeta }
   | { readonly type: 'tool_start'; readonly name: string; readonly args: Readonly<Record<string, unknown>> }
   | { readonly type: 'tool_end'; readonly name: string; readonly result: McpToolResult; readonly durationMs: number }
+  | { readonly type: 'fallback'; readonly reason: 'tools_ignored'; readonly model: string }
   | { readonly type: 'done'; readonly response: ConversationResponse };
 
 export interface ToolCallRecord {
@@ -144,4 +145,5 @@ export interface ConversationOptions {
   readonly maxToolRounds?: number | undefined;
   readonly onRoundMeta?: ((meta: ResponseMeta) => void) | undefined;
   readonly onToolsIgnored?: ((model: string) => void) | undefined;
+  readonly enablePromptToolFallback?: boolean | undefined;
 }

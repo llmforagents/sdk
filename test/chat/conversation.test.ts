@@ -515,3 +515,119 @@ describe('Conversation — onToolsIgnored callback', () => {
     expect(wasCalled).toBe(false);
   });
 });
+
+describe('Conversation — enablePromptToolFallback', () => {
+  it('say(): retries in prompt mode and executes tool calls parsed from text', async () => {
+    fetchSpy
+      .mockResolvedValueOnce(mcpToolsList())
+      // Round 0: model ignores tools entirely
+      .mockResolvedValueOnce(chatResponse('I cannot do that without searching.'))
+      // Fallback round: model emits tool_call block in text
+      .mockResolvedValueOnce(chatResponse('Let me search.\n<tool_call>{"name":"google_search","arguments":{"q":"bitcoin"}}</tool_call>'))
+      // After tool execution, final answer
+      .mockResolvedValueOnce(mcpResponse('Bitcoin is up 5%'))
+      .mockResolvedValueOnce(chatResponse('Bitcoin is up 5% today.'));
+
+    const conv = new Conversation(http, {
+      model: 'no-fc-model',
+      tools,
+      enablePromptToolFallback: true,
+    });
+
+    const result = await conv.say('Price of bitcoin?');
+    expect(result.content).toBe('Bitcoin is up 5% today.');
+    expect(result.toolCalls).toHaveLength(1);
+    expect(result.toolCalls[0]?.name).toBe('google_search');
+  });
+
+  it('say(): when fallback also returns no tool calls, returns the prompt-mode text', async () => {
+    fetchSpy
+      .mockResolvedValueOnce(mcpToolsList())
+      .mockResolvedValueOnce(chatResponse('Plain answer.'))
+      .mockResolvedValueOnce(chatResponse('Still a plain answer with no tools.'));
+
+    const conv = new Conversation(http, {
+      model: 'no-fc-model',
+      tools,
+      enablePromptToolFallback: true,
+    });
+
+    const result = await conv.say('hi');
+    expect(result.content).toBe('Still a plain answer with no tools.');
+    expect(result.toolCalls).toHaveLength(0);
+  });
+
+  it('say(): does NOT trigger fallback when flag is false', async () => {
+    fetchSpy
+      .mockResolvedValueOnce(mcpToolsList())
+      .mockResolvedValueOnce(chatResponse('Direct answer'));
+
+    const conv = new Conversation(http, {
+      model: 'no-fc-model',
+      tools,
+      enablePromptToolFallback: false,
+    });
+
+    const result = await conv.say('hi');
+    expect(result.content).toBe('Direct answer');
+    // Only 2 fetches total (mcp list + chat); no fallback round
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it('stream(): emits a fallback event then runs prompt-mode tool calls', async () => {
+    function streamResponse(textChunks: string[], finishReason = 'stop'): Response {
+      const sse = textChunks
+        .map((c) =>
+          `data: ${JSON.stringify({
+            id: 'c1', model: 'm', choices: [{ index: 0, delta: { content: c }, finish_reason: null }],
+          })}\n\n`,
+        )
+        .concat([
+          `data: ${JSON.stringify({
+            id: 'c1', model: 'm',
+            choices: [{ index: 0, delta: {}, finish_reason: finishReason }],
+            usage: { prompt_tokens: 5, completion_tokens: 3 },
+          })}\n\n`,
+          'data: [DONE]\n\n',
+        ])
+        .join('');
+      return new Response(sse, { status: 200, headers: { 'content-type': 'text/event-stream' } });
+    }
+
+    fetchSpy
+      .mockResolvedValueOnce(mcpToolsList())
+      // Round 0 (streamed): model ignores tools
+      .mockResolvedValueOnce(streamResponse(['I cannot help.']))
+      // Fallback round (non-streamed POST): tool_call in text
+      .mockResolvedValueOnce(chatResponse('<tool_call>{"name":"google_search","arguments":{"q":"x"}}</tool_call>'))
+      .mockResolvedValueOnce(mcpResponse('result'))
+      // Final round (streamed)
+      .mockResolvedValueOnce(streamResponse(['Final answer.']));
+
+    const conv = new Conversation(http, {
+      model: 'no-fc-model',
+      tools,
+      enablePromptToolFallback: true,
+    });
+
+    const events: StreamEvent[] = [];
+    for await (const ev of conv.stream('q?')) events.push(ev);
+
+    const fallbackEvent = events.find((e) => e.type === 'fallback');
+    expect(fallbackEvent).toBeDefined();
+    if (fallbackEvent && fallbackEvent.type === 'fallback') {
+      expect(fallbackEvent.reason).toBe('tools_ignored');
+      expect(fallbackEvent.model).toBe('no-fc-model');
+    }
+
+    const toolEnd = events.find((e) => e.type === 'tool_end');
+    expect(toolEnd).toBeDefined();
+
+    const done = events.find((e) => e.type === 'done');
+    expect(done).toBeDefined();
+    if (done && done.type === 'done') {
+      expect(done.response.toolCalls).toHaveLength(1);
+      expect(done.response.toolCalls[0]?.name).toBe('google_search');
+    }
+  });
+});
