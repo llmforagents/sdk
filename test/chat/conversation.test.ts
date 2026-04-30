@@ -354,3 +354,74 @@ describe('Conversation.stream()', () => {
     expect(toolEnd.result.text).toBe('cancelled by hook');
   });
 });
+
+describe('Conversation — fail-fast on tool error', () => {
+  it('throws LLM4AgentsError when a tool call fails', async () => {
+    fetchSpy
+      .mockResolvedValueOnce(mcpToolsList())
+      .mockResolvedValueOnce(chatResponse('', [{
+        id: 'tc-1', type: 'function',
+        function: { name: 'google_search', arguments: '{"q":"test"}' },
+      }]))
+      .mockResolvedValueOnce(new Response(
+        JSON.stringify({ error: { code: -32601, message: 'Method not found' } }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      ));
+
+    const conv = new Conversation(http, { model: 'test-model', tools });
+    await expect(conv.say('Search something')).rejects.toThrow(LLM4AgentsError);
+  });
+});
+
+describe('Conversation — dedup tool calls', () => {
+  it('executes duplicate (name, args) only once per round', async () => {
+    fetchSpy
+      .mockResolvedValueOnce(mcpToolsList())
+      .mockResolvedValueOnce(chatResponse('', [
+        { id: 'tc-1', type: 'function', function: { name: 'google_search', arguments: '{"q":"test"}' } },
+        { id: 'tc-2', type: 'function', function: { name: 'google_search', arguments: '{"q":"test"}' } },
+      ]))
+      .mockResolvedValueOnce(mcpResponse('results'))  // only ONE mcp tools/call
+      .mockResolvedValueOnce(chatResponse('Done'));
+
+    const conv = new Conversation(http, { model: 'test-model', tools });
+    const result = await conv.say('Search');
+    expect(result.content).toBe('Done');
+    // tools/list (1) + tools/call (1) = 2 MCP calls, NOT 3
+    const mcpCalls = fetchSpy.mock.calls.filter(([url]) =>
+      (url as string).includes('mcp')
+    );
+    expect(mcpCalls).toHaveLength(2);
+  });
+});
+
+describe('Conversation — image short-circuit', () => {
+  it('stops tool loop when result contains image content', async () => {
+    fetchSpy
+      .mockResolvedValueOnce(mcpToolsList())
+      .mockResolvedValueOnce(chatResponse('', [{
+        id: 'tc-1', type: 'function',
+        function: { name: 'google_search', arguments: '{"q":"cat"}' },
+      }]))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        result: {
+          content: [
+            { type: 'text', text: 'Caption: a cat' },
+            { type: 'image', data: 'base64abc', mimeType: 'image/png' },
+          ],
+        },
+      }), { status: 200, headers: { 'content-type': 'application/json' } }));
+
+    const conv = new Conversation(http, { model: 'test-model', tools });
+    const result = await conv.say('Show me a cat');
+
+    // Should NOT have made another LLM call after the image result
+    const chatCalls = fetchSpy.mock.calls.filter(([url]) =>
+      !(url as string).includes('mcp')
+    );
+    expect(chatCalls).toHaveLength(1); // only initial LLM call, no follow-up
+
+    expect(result.toolCalls).toHaveLength(1);
+    expect(result.toolCalls[0]?.result.content.some(c => c.type === 'image')).toBe(true);
+  });
+});

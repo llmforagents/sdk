@@ -108,9 +108,35 @@ export class Conversation {
         );
       }
 
+      const seenThisRound = new Set<string>();
       for (const toolCall of assistantMessage.tool_calls) {
+        const key = `${toolCall.function.name}:${toolCall.function.arguments}`;
+        if (seenThisRound.has(key)) {
+          // Skip execution but add a history entry so the LLM sees a tool result
+          const firstRecord = [...allToolCalls].reverse().find((r) => r.name === toolCall.function.name);
+          const text = firstRecord?.result.text ?? '';
+          this.history.push({ role: 'tool', content: text, tool_call_id: toolCall.id });
+          continue;
+        }
+        seenThisRound.add(key);
         const record = await this.executeToolCall(toolCall);
         allToolCalls.push(record);
+      }
+
+      // Image short-circuit: if any tool returned an image, stop looping
+      const hasImage = allToolCalls.some((tc) =>
+        tc.result.content.some((c) => c.type === 'image'),
+      );
+      if (hasImage) {
+        return {
+          content: '',
+          toolCalls: allToolCalls,
+          usage: {
+            promptTokens: totalPromptTokens,
+            completionTokens: totalCompletionTokens,
+            totalTokens: totalPromptTokens + totalCompletionTokens,
+          },
+        };
       }
     }
   }
@@ -219,6 +245,7 @@ export class Conversation {
         );
       }
 
+      const seenThisRound = new Set<string>();
       for (const toolCall of toolCallsArray) {
         const name = toolCall.function.name;
         let args: Readonly<Record<string, unknown>>;
@@ -227,6 +254,16 @@ export class Conversation {
         } catch {
           args = {};
         }
+
+        const key = `${name}:${toolCall.function.arguments}`;
+        if (seenThisRound.has(key)) {
+          // Skip execution but add a history entry so the LLM sees a tool result
+          const firstRecord = [...allToolCalls].reverse().find((r) => r.name === name);
+          const text = firstRecord?.result.text ?? '';
+          this.history.push({ role: 'tool', content: text, tool_call_id: toolCall.id });
+          continue;
+        }
+        seenThisRound.add(key);
 
         yield { type: 'tool_start', name, args };
 
@@ -242,14 +279,10 @@ export class Conversation {
         }
 
         const start = Date.now();
-        let result: McpToolResult;
-        try {
-          result = this.tools
-            ? await this.tools.call(name, args, this.signal)
-            : mkTextResult(`Tool ${name} not available`);
-        } catch (err) {
-          result = mkTextResult(err instanceof Error ? err.message : `Tool ${name} failed`);
-        }
+        // Let errors from tools.call() propagate — no try/catch
+        const result = this.tools
+          ? await this.tools.call(name, args, this.signal)
+          : mkTextResult(`Tool ${name} not available`);
         const durationMs = Date.now() - start;
 
         if (this.onToolResult) {
@@ -259,6 +292,26 @@ export class Conversation {
         this.history.push({ role: 'tool', content: result.text, tool_call_id: toolCall.id });
         allToolCalls.push({ name, args, result, durationMs });
         yield { type: 'tool_end', name, result, durationMs };
+      }
+
+      // Image short-circuit: if any tool returned an image, stop looping
+      const hasImage = allToolCalls.some((tc) =>
+        tc.result.content.some((c) => c.type === 'image'),
+      );
+      if (hasImage) {
+        yield {
+          type: 'done',
+          response: {
+            content: fullContent,
+            toolCalls: allToolCalls,
+            usage: {
+              promptTokens: totalPromptTokens,
+              completionTokens: totalCompletionTokens,
+              totalTokens: totalPromptTokens + totalCompletionTokens,
+            },
+          },
+        };
+        return;
       }
 
       fullContent = '';
@@ -315,14 +368,10 @@ export class Conversation {
     }
 
     const start = Date.now();
-    let result: McpToolResult;
-    try {
-      result = this.tools
-        ? await this.tools.call(name, args, this.signal)
-        : mkTextResult(`Tool ${name} not available`);
-    } catch (err) {
-      result = mkTextResult(err instanceof Error ? err.message : `Tool ${name} failed`);
-    }
+    // Let errors from tools.call() propagate — no try/catch
+    const result = this.tools
+      ? await this.tools.call(name, args, this.signal)
+      : mkTextResult(`Tool ${name} not available`);
     const durationMs = Date.now() - start;
 
     if (this.onToolResult) {
