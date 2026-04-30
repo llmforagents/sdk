@@ -104,6 +104,7 @@ export interface ImageEditParams {
   readonly prompt: string;
   readonly imageUrl?: string | undefined;
   readonly imageBase64?: string | undefined;
+  readonly aspect_ratio?: string | undefined;
 }
 
 export interface ImageAnalyzeParams {

@@ -39,6 +39,7 @@ export interface QuoteResult {
     readonly permit: EIP712TypedData;
     readonly transferPermit: EIP712TypedData;
   };
+  readonly forwarderAddress: string;
   readonly requestId: string;
 }
 
