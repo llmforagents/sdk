@@ -3,7 +3,18 @@ import type { McpContent, McpTextContent, McpToolResult } from '../tools/types.j
 
 function extractText(c: Readonly<Record<string, unknown>>): string {
   const raw = c['text'];
-  if (typeof raw === 'string') return raw;
+  if (typeof raw === 'string') {
+    // Check if the string is a JSON wrapper like {"text":"...","costCents":N}
+    if (raw.trimStart().startsWith('{')) {
+      try {
+        const parsed = JSON.parse(raw) as Record<string, unknown>;
+        if (typeof parsed['text'] === 'string') return parsed['text'];
+      } catch {
+        // not JSON, return as-is
+      }
+    }
+    return raw;
+  }
   if (raw !== null && typeof raw === 'object') {
     const wrapped = raw as Record<string, unknown>;
     if (typeof wrapped['text'] === 'string') return wrapped['text'];
@@ -40,8 +51,44 @@ function normalizeContent(c: Readonly<Record<string, unknown>>): McpContent {
     };
   }
 
-  // default: text
-  return { type: 'text', text: extractText(c) };
+  // default: text — but first check if text is a JSON-wrapped image/resource/text
+  const textValue = extractText(c);
+
+  // Try to detect JSON-wrapped payloads the MCP server embeds in text blocks
+  if (textValue.trimStart().startsWith('{')) {
+    try {
+      const parsed = JSON.parse(textValue) as Record<string, unknown>;
+
+      // Wrapped image: {"imageBase64":"..."} or {"pngBase64":"..."} or {"pdfBase64":"..."}
+      const base64 =
+        (typeof parsed['imageBase64'] === 'string' ? parsed['imageBase64'] : undefined) ??
+        (typeof parsed['pngBase64'] === 'string' ? parsed['pngBase64'] : undefined) ??
+        (typeof parsed['pdfBase64'] === 'string' ? parsed['pdfBase64'] : undefined);
+
+      if (base64 !== undefined) {
+        const mimeType =
+          (typeof parsed['mimeType'] === 'string' ? parsed['mimeType'] : undefined) ??
+          (typeof parsed['mime_type'] === 'string' ? parsed['mime_type'] : undefined) ??
+          sniffMimeType(base64);
+
+        // PDF wrapped in text
+        if (mimeType === 'application/pdf' || typeof parsed['pdfBase64'] === 'string') {
+          return {
+            type: 'resource',
+            uri: '',
+            text: base64,
+            mimeType: 'application/pdf',
+          };
+        }
+
+        return { type: 'image', data: base64, mimeType };
+      }
+    } catch {
+      // not JSON, fall through to plain text
+    }
+  }
+
+  return { type: 'text', text: textValue };
 }
 
 function sniffMimeType(base64: string): string {

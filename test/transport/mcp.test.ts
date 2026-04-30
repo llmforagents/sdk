@@ -232,6 +232,85 @@ describe('McpTransport.callTool() — field normalization', () => {
   });
 });
 
+describe('McpTransport.callTool() — JSON-in-text unwrap', () => {
+  it('promotes text block with imageBase64 JSON string to image content', async () => {
+    fetchSpy.mockResolvedValueOnce(mockResponse({
+      result: {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({ imageBase64: 'iVBORw0KGgo=', mimeType: 'image/png' }),
+        }],
+      },
+    }));
+
+    const result = await transport.callTool('generate_image', { prompt: 'cat' });
+    expect(result.content).toHaveLength(1);
+    const part = result.content[0];
+    expect(part?.type).toBe('image');
+    if (part?.type === 'image') {
+      expect(part.data).toBe('iVBORw0KGgo=');
+      expect(part.mimeType).toBe('image/png');
+    }
+  });
+
+  it('promotes text block with pngBase64 JSON string to image content', async () => {
+    fetchSpy.mockResolvedValueOnce(mockResponse({
+      result: {
+        content: [{ type: 'text', text: JSON.stringify({ pngBase64: 'abc123', mimeType: 'image/png' }) }],
+      },
+    }));
+
+    const result = await transport.callTool('screenshot', {});
+    const part = result.content[0];
+    expect(part?.type).toBe('image');
+    if (part?.type === 'image') {
+      expect(part.data).toBe('abc123');
+    }
+  });
+
+  it('promotes text block with pdfBase64 JSON string to resource content', async () => {
+    fetchSpy.mockResolvedValueOnce(mockResponse({
+      result: {
+        content: [{ type: 'text', text: JSON.stringify({ pdfBase64: 'JVBERi0=', pageCount: 5 }) }],
+      },
+    }));
+
+    const result = await transport.callTool('pdf', { url: 'https://example.com' });
+    const part = result.content[0];
+    expect(part?.type).toBe('resource');
+    if (part?.type === 'resource') {
+      expect(part.mimeType).toBe('application/pdf');
+      expect(part.text).toBe('JVBERi0=');
+    }
+  });
+
+  it('unwraps {text, costCents} JSON string in text block', async () => {
+    fetchSpy.mockResolvedValueOnce(mockResponse({
+      result: {
+        content: [{ type: 'text', text: JSON.stringify({ text: 'Analysis result', costCents: 5 }) }],
+      },
+    }));
+
+    const result = await transport.callTool('analyze_image', { prompt: 'what is this?' });
+    expect(result.text).toBe('Analysis result');
+    const part = result.content[0];
+    if (part?.type === 'text') {
+      expect(part.text).toBe('Analysis result');
+    }
+  });
+
+  it('does not try to parse non-JSON text strings', async () => {
+    fetchSpy.mockResolvedValueOnce(mockResponse({
+      result: {
+        content: [{ type: 'text', text: 'Hello, this is plain text' }],
+      },
+    }));
+
+    const result = await transport.callTool('google_search', { q: 'test' });
+    expect(result.text).toBe('Hello, this is plain text');
+  });
+});
+
 describe('McpTransport.callTool() — abort signal', () => {
   it('aborts the fetch when signal is triggered', async () => {
     const controller = new AbortController();

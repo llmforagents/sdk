@@ -8,11 +8,12 @@ export interface ClientOptions {
 export interface ModelInfo {
   readonly slug: string;
   readonly displayName: string;
-  readonly provider: string;
+  readonly provider: string | null;
   readonly inputPricePer1M: number;
   readonly outputPricePer1M: number;
   readonly contextWindow: number;
-  readonly lastSyncedAt: string;
+  readonly lastSyncedAt: string | null;
+  readonly feePct?: number | undefined;
 }
 
 export interface ModelListParams {
