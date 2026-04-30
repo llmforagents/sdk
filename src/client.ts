@@ -6,6 +6,7 @@ import { Conversation } from './chat/conversation.js';
 import { Wallets } from './wallets/wallets.js';
 import { Transfer } from './transfer/transfer.js';
 import { Tools } from './tools/tools.js';
+import { Agents } from './agents/agents.js';
 import type { ConversationOptions } from './chat/types.js';
 
 const DEFAULT_BASE_URL = 'https://api.llm4agents.com';
@@ -21,6 +22,7 @@ export class LLM4AgentsClient {
   readonly wallets: Wallets;
   readonly transfer: Transfer;
   readonly tools: Tools;
+  readonly agents: Agents;
   readonly models: { readonly list: (params?: ModelListParams) => Promise<ModelListResult> };
 
   constructor(opts: ClientOptions) {
@@ -41,6 +43,7 @@ export class LLM4AgentsClient {
     this.wallets = new Wallets(http);
     this.transfer = new Transfer(http);
     this.tools = tools;
+    this.agents = new Agents(http);
     this.models = {
       list: (params?: ModelListParams) => {
         const qs = params?.search ? { search: params.search } : undefined;

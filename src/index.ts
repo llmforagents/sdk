@@ -49,6 +49,9 @@ export type {
   EIP712TypedData,
 } from './transfer/types.js';
 
+// === Types — Agents ===
+export type { AgentRegistration, AgentRegistrationParams } from './agents/agents.js';
+
 // === Types — Tools ===
 export type {
   ToolDefinition,
