@@ -87,7 +87,7 @@ export class Conversation {
       this.history.push(assistantMessage);
 
       if (!assistantMessage.tool_calls || assistantMessage.tool_calls.length === 0) {
-        if (roundCount === 0 && this.tools && this.onToolsIgnored) {
+        if (roundCount === 0 && toolDefs && toolDefs.length > 0 && this.onToolsIgnored) {
           this.onToolsIgnored(this.model);
         }
         const rawContent = assistantMessage.content;
@@ -236,7 +236,7 @@ export class Conversation {
       this.history.push(assistantMessage);
 
       if (toolCallsArray.length === 0) {
-        if (roundCount === 0 && this.tools && this.onToolsIgnored) {
+        if (roundCount === 0 && toolDefs && toolDefs.length > 0 && this.onToolsIgnored) {
           this.onToolsIgnored(this.model);
         }
         yield {
