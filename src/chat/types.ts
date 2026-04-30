@@ -143,4 +143,5 @@ export interface ConversationOptions {
   readonly onToolResult?: ((name: string, result: McpToolResult) => void | Promise<void>) | undefined;
   readonly maxToolRounds?: number | undefined;
   readonly onRoundMeta?: ((meta: ResponseMeta) => void) | undefined;
+  readonly onToolsIgnored?: ((model: string) => void) | undefined;
 }
