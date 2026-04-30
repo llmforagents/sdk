@@ -23,8 +23,12 @@ export type ToolChoice =
   | 'required'
   | { readonly type: 'function'; readonly function: { readonly name: string } };
 
-export interface ChatCompletionParams {
-  readonly model: string;
+// Model selection — mutually exclusive, enforced at compile time
+type ModelSpec =
+  | { readonly model: string; readonly models?: undefined }
+  | { readonly models: readonly string[]; readonly model?: undefined };
+
+export type ChatCompletionParams = ModelSpec & {
   readonly messages: readonly ChatMessage[];
   readonly temperature?: number | undefined;
   readonly max_tokens?: number | undefined;
@@ -33,7 +37,7 @@ export interface ChatCompletionParams {
   readonly tool_choice?: ToolChoice | undefined;
   readonly reasoning?: boolean | undefined;
   readonly include_reasoning?: boolean | undefined;
-}
+};
 
 export interface ChatChoice {
   readonly index: number;
@@ -84,6 +88,10 @@ export interface StreamChunk {
 export interface ResponseMeta {
   readonly requestId: string | undefined;
   readonly modelUsed: string | undefined;
+  readonly costUsdCents: number | undefined;
+  readonly balanceRemainingCents: number | undefined;
+  readonly tokensInput: number | undefined;
+  readonly tokensOutput: number | undefined;
   readonly headers: Headers;
 }
 

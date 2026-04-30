@@ -9,8 +9,8 @@ export interface ModelInfo {
   readonly slug: string;
   readonly displayName: string;
   readonly provider: string;
-  readonly inputPricePer1m: number;
-  readonly outputPricePer1m: number;
+  readonly inputPricePer1M: number;
+  readonly outputPricePer1M: number;
   readonly contextWindow: number;
   readonly lastSyncedAt: string;
 }

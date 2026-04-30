@@ -31,7 +31,7 @@ export interface Balance {
 }
 
 export interface TransactionFilter {
-  readonly type?: 'deposit' | 'usage' | 'refund' | undefined;
+  readonly type?: 'deposit' | 'usage' | 'refund' | 'gas_sponsored' | undefined;
   readonly limit?: number | undefined;
   readonly offset?: number | undefined;
 }

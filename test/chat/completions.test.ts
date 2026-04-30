@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ChatCompletions } from '../../src/chat/completions.js';
 import { HttpTransport } from '../../src/transport/http.js';
+import type { ResponseMeta } from '../../src/chat/types.js';
 
 const API_KEY = 'sk-proxy-test-key';
 const BASE_URL = 'https://api.test.com';
@@ -81,5 +82,59 @@ describe('ChatCompletions.create() streaming', () => {
     }
 
     expect(chunks.length).toBeGreaterThanOrEqual(2);
+  });
+});
+
+describe('ChatCompletionParams models[] fallback', () => {
+  it('sends models array when provided instead of model', async () => {
+    fetchSpy.mockResolvedValueOnce(mockResponse({
+      id: 'chatcmpl-1',
+      choices: [{ index: 0, message: { role: 'assistant', content: 'Hi' }, finish_reason: 'stop' }],
+      usage: { prompt_tokens: 10, completion_tokens: 5 },
+      model: 'openai/gpt-4o',
+    }));
+
+    await chat.create({
+      models: ['anthropic/claude-sonnet-4', 'openai/gpt-4o'],
+      messages: [{ role: 'user', content: 'Hi' }],
+    });
+
+    const body = JSON.parse((fetchSpy.mock.calls[0] as [string, RequestInit])[1].body as string) as Record<string, unknown>;
+    expect(body['models']).toEqual(['anthropic/claude-sonnet-4', 'openai/gpt-4o']);
+    expect(body['model']).toBeUndefined();
+  });
+});
+
+describe('ResponseMeta cost headers', () => {
+  it('exposes X-Cost-Usd-Cents and X-Balance-Remaining-Cents as typed fields', async () => {
+    fetchSpy.mockResolvedValueOnce(new Response(JSON.stringify({
+      id: 'chatcmpl-1',
+      choices: [{ index: 0, message: { role: 'assistant', content: 'Hi' }, finish_reason: 'stop' }],
+      usage: { prompt_tokens: 10, completion_tokens: 5 },
+      model: 'openai/gpt-4o',
+    }), {
+      status: 200,
+      headers: {
+        'content-type': 'application/json',
+        'x-request-id': 'req_1',
+        'x-cost-usd-cents': '12',
+        'x-balance-remaining-cents': '9988',
+        'x-tokens-input': '10',
+        'x-tokens-output': '5',
+        'x-model-used': 'openai/gpt-4o',
+      },
+    }));
+
+    let capturedMeta: ResponseMeta | undefined;
+    await chat.create(
+      { model: 'openai/gpt-4o', messages: [{ role: 'user', content: 'Hi' }] },
+      { onMeta: (m) => { capturedMeta = m; } },
+    );
+
+    expect(capturedMeta?.costUsdCents).toBe(12);
+    expect(capturedMeta?.balanceRemainingCents).toBe(9988);
+    expect(capturedMeta?.tokensInput).toBe(10);
+    expect(capturedMeta?.tokensOutput).toBe(5);
+    expect(capturedMeta?.modelUsed).toBe('openai/gpt-4o');
   });
 });

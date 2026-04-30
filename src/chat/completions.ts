@@ -1,6 +1,24 @@
 import type { HttpTransport } from '../transport/http.js';
 import type { ChatCompletionParams, ChatResponse, StreamChunk, CompletionOptions, ResponseMeta } from './types.js';
 
+function buildMeta(headers: Headers): ResponseMeta {
+  const parseIntHeader = (name: string): number | undefined => {
+    const val = headers.get(name);
+    if (val === null) return undefined;
+    const n = parseInt(val, 10);
+    return isNaN(n) ? undefined : n;
+  };
+  return {
+    requestId: headers.get('x-request-id') ?? undefined,
+    modelUsed: headers.get('x-model-used') ?? undefined,
+    costUsdCents: parseIntHeader('x-cost-usd-cents'),
+    balanceRemainingCents: parseIntHeader('x-balance-remaining-cents'),
+    tokensInput: parseIntHeader('x-tokens-input'),
+    tokensOutput: parseIntHeader('x-tokens-output'),
+    headers,
+  };
+}
+
 export class ChatCompletions {
   constructor(private readonly http: HttpTransport) {}
 
@@ -20,12 +38,7 @@ export class ChatCompletions {
       options?.signal,
     );
     if (options?.onMeta) {
-      const meta: ResponseMeta = {
-        requestId: headers.get('x-request-id') ?? undefined,
-        modelUsed: headers.get('x-model-used') ?? undefined,
-        headers,
-      };
-      options.onMeta(meta);
+      options.onMeta(buildMeta(headers));
     }
     return data;
   }
@@ -33,12 +46,7 @@ export class ChatCompletions {
   private async createStream(params: ChatCompletionParams, options?: CompletionOptions): Promise<AsyncIterable<StreamChunk>> {
     const streamResp = await this.http.postStream('/v1/chat/completions', params, options?.signal);
     if (options?.onMeta) {
-      const meta: ResponseMeta = {
-        requestId: streamResp.requestId,
-        modelUsed: streamResp.headers.get('x-model-used') ?? undefined,
-        headers: streamResp.headers,
-      };
-      options.onMeta(meta);
+      options.onMeta(buildMeta(streamResp.headers));
     }
     return this.parseSSE(streamResp.stream);
   }
