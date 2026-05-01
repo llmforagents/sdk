@@ -585,6 +585,120 @@ describe('Conversation — assistant.content normalization (BUG-08)', () => {
   });
 });
 
+describe('Conversation — synthesize tool_call.id when provider omits it (BUG-09)', () => {
+  it('say(): generates synthetic id when assistant.tool_calls[i].id is missing', async () => {
+    const toolCallNoId = new Response(JSON.stringify({
+      id: 'c1',
+      choices: [{
+        index: 0,
+        message: {
+          role: 'assistant',
+          content: null,
+          tool_calls: [{
+            type: 'function',
+            function: { name: 'google_search', arguments: '{"q":"x"}' },
+          }],
+        },
+        finish_reason: 'tool_calls',
+      }],
+      usage: { prompt_tokens: 5, completion_tokens: 2 },
+      model: 'gemini-flash',
+    }), { status: 200, headers: { 'content-type': 'application/json' } });
+
+    fetchSpy
+      .mockResolvedValueOnce(mcpToolsList())
+      .mockResolvedValueOnce(toolCallNoId)
+      .mockResolvedValueOnce(mcpResponse('result'))
+      .mockResolvedValueOnce(chatResponse('Done.'));
+
+    const conv = new Conversation(http, { model: 'gemini-flash', tools });
+    await conv.say('search');
+
+    const assistantMsg = conv.messages.find(
+      (m) => m.role === 'assistant' && (m as { tool_calls?: { id: string }[] }).tool_calls,
+    );
+    const toolCalls = (assistantMsg as { tool_calls: { id: string }[] }).tool_calls;
+    expect(toolCalls[0]?.id).toBeDefined();
+    expect(toolCalls[0]?.id).toMatch(/^auto_/);
+
+    const toolMsg = conv.messages.find((m) => m.role === 'tool');
+    expect(toolMsg?.tool_call_id).toBe(toolCalls[0]?.id);
+    expect(toolMsg?.tool_call_id).toMatch(/^auto_/);
+  });
+
+  it('say(): preserves provider-supplied id when present (no synthesis)', async () => {
+    fetchSpy
+      .mockResolvedValueOnce(mcpToolsList())
+      .mockResolvedValueOnce(chatResponse('', [{
+        id: 'tc-real-id',
+        type: 'function',
+        function: { name: 'google_search', arguments: '{"q":"x"}' },
+      }]))
+      .mockResolvedValueOnce(mcpResponse('result'))
+      .mockResolvedValueOnce(chatResponse('Done.'));
+
+    const conv = new Conversation(http, { model: 'm', tools });
+    await conv.say('search');
+
+    const toolMsg = conv.messages.find((m) => m.role === 'tool');
+    expect(toolMsg?.tool_call_id).toBe('tc-real-id');
+  });
+
+  it('role: "tool" history entries include name field (defense-in-depth for legacy providers)', async () => {
+    fetchSpy
+      .mockResolvedValueOnce(mcpToolsList())
+      .mockResolvedValueOnce(chatResponse('', [{
+        id: 'tc-1',
+        type: 'function',
+        function: { name: 'google_search', arguments: '{"q":"x"}' },
+      }]))
+      .mockResolvedValueOnce(mcpResponse('result'))
+      .mockResolvedValueOnce(chatResponse('Done.'));
+
+    const conv = new Conversation(http, { model: 'm', tools });
+    await conv.say('search');
+
+    const toolMsg = conv.messages.find((m) => m.role === 'tool');
+    expect((toolMsg as { name?: string }).name).toBe('google_search');
+  });
+
+  it('stream(): generates synthetic id when streaming chunks omit tool_call.id', async () => {
+    function streamToolCallNoId(): Response {
+      const sse = [
+        `data: ${JSON.stringify({ id: 'c1', model: 'm', choices: [{ index: 0, delta: { tool_calls: [{ index: 0, type: 'function', function: { name: 'google_search', arguments: '{"q":"x"}' } }] }, finish_reason: null }] })}\n\n`,
+        `data: ${JSON.stringify({ id: 'c1', model: 'm', choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }], usage: { prompt_tokens: 5, completion_tokens: 2 } })}\n\n`,
+        'data: [DONE]\n\n',
+      ].join('');
+      return new Response(sse, { status: 200, headers: { 'content-type': 'text/event-stream' } });
+    }
+
+    fetchSpy
+      .mockResolvedValueOnce(mcpToolsList())
+      .mockResolvedValueOnce(streamToolCallNoId())
+      .mockResolvedValueOnce(mcpResponse('result'))
+      .mockResolvedValueOnce(new Response(
+        [
+          `data: ${JSON.stringify({ id: 'c2', model: 'm', choices: [{ index: 0, delta: { content: 'Done.' }, finish_reason: null }] })}\n\n`,
+          `data: ${JSON.stringify({ id: 'c2', model: 'm', choices: [{ index: 0, delta: {}, finish_reason: 'stop' }], usage: { prompt_tokens: 1, completion_tokens: 1 } })}\n\n`,
+          'data: [DONE]\n\n',
+        ].join(''),
+        { status: 200, headers: { 'content-type': 'text/event-stream' } },
+      ));
+
+    const conv = new Conversation(http, { model: 'm', tools });
+    for await (const _ev of conv.stream('search')) { /* drain */ }
+
+    const assistantMsg = conv.messages.find(
+      (m) => m.role === 'assistant' && (m as { tool_calls?: { id: string }[] }).tool_calls,
+    );
+    const toolCalls = (assistantMsg as { tool_calls: { id: string }[] }).tool_calls;
+    expect(toolCalls[0]?.id).toMatch(/^auto_/);
+
+    const toolMsg = conv.messages.find((m) => m.role === 'tool');
+    expect(toolMsg?.tool_call_id).toBe(toolCalls[0]?.id);
+  });
+});
+
 describe('Conversation — reasoning tokens propagation (BUG-03)', () => {
   it('say() propagates reasoning_tokens into ConversationResponse.usage.reasoningTokens', async () => {
     const sayResponse = new Response(JSON.stringify({

@@ -17,6 +17,20 @@ import type {
 
 const DEFAULT_MAX_TOOL_ROUNDS = 10;
 
+// Some providers (Google Gemini, certain Anthropic models via OpenRouter) return
+// tool_calls without an `id`. Without one, the matching `role: 'tool'` reply
+// has no `tool_call_id` and Google rejects the next round with HTTP 400 while
+// Anthropic returns 500. Synthesize a stable id when missing.
+function normalizeToolCalls(
+  toolCalls: readonly ToolCall[],
+  roundCount: number,
+): ToolCall[] {
+  return toolCalls.map((tc, i) => ({
+    ...tc,
+    id: tc.id && tc.id.length > 0 ? tc.id : `auto_${roundCount}_${i}_${Date.now()}`,
+  }));
+}
+
 function mkTextResult(text: string): McpToolResult {
   const content: McpTextContent = { type: 'text', text };
   return { content: [content], text, raw: [] };
@@ -93,9 +107,14 @@ export class Conversation {
       // Normalize content: some providers (OpenAI, Gemini) return content: null when
       // a message is purely tool_calls. Strict backend validators reject null on
       // subsequent rounds; coerce to '' so the next request stays valid.
+      // Also normalize tool_calls.id: some providers omit it, which makes the
+      // matching role: 'tool' reply lack tool_call_id and break the next round.
       const assistantMessage: ChatMessage = {
         ...choice.message,
         content: choice.message.content ?? '',
+        ...(choice.message.tool_calls && choice.message.tool_calls.length > 0
+          ? { tool_calls: normalizeToolCalls(choice.message.tool_calls, roundCount) }
+          : {}),
       };
       this.history.push(assistantMessage);
 
@@ -173,7 +192,7 @@ export class Conversation {
           // Skip execution but add a history entry so the LLM sees a tool result
           const firstRecord = [...allToolCalls].reverse().find((r) => r.name === toolCall.function.name);
           const text = firstRecord?.result.text ?? '';
-          this.history.push({ role: 'tool', content: text, tool_call_id: toolCall.id });
+          this.history.push({ role: 'tool', content: text, tool_call_id: toolCall.id, name: toolCall.function.name });
           continue;
         }
         seenThisRound.add(key);
@@ -280,11 +299,14 @@ export class Conversation {
         }
       }
 
-      const toolCallsArray: ToolCall[] = [...pendingToolCalls.values()].map((tc) => ({
-        id: tc.id,
-        type: 'function' as const,
-        function: { name: tc.name, arguments: tc.args },
-      }));
+      const toolCallsArray: ToolCall[] = normalizeToolCalls(
+        [...pendingToolCalls.values()].map((tc) => ({
+          id: tc.id,
+          type: 'function' as const,
+          function: { name: tc.name, arguments: tc.args },
+        })),
+        roundCount,
+      );
 
       const assistantMessage: ChatMessage = {
         role: 'assistant',
@@ -345,7 +367,7 @@ export class Conversation {
               const proceed = await this.onToolCall(name, args);
               if (!proceed) {
                 const cancelled = mkTextResult('cancelled by hook');
-                this.history.push({ role: 'tool', content: cancelled.text, tool_call_id: toolCall.id });
+                this.history.push({ role: 'tool', content: cancelled.text, tool_call_id: toolCall.id, name });
                 allToolCalls.push({ name, args, result: cancelled, durationMs: 0 });
                 yield { type: 'tool_end', name, result: cancelled, durationMs: 0 };
                 continue;
@@ -361,7 +383,7 @@ export class Conversation {
             if (this.onToolResult) {
               await this.onToolResult(name, result);
             }
-            this.history.push({ role: 'tool', content: result.text, tool_call_id: toolCall.id });
+            this.history.push({ role: 'tool', content: result.text, tool_call_id: toolCall.id, name });
             allToolCalls.push({ name, args, result, durationMs });
             yield { type: 'tool_end', name, result, durationMs };
           }
@@ -412,7 +434,7 @@ export class Conversation {
           // Skip execution but add a history entry so the LLM sees a tool result
           const firstRecord = [...allToolCalls].reverse().find((r) => r.name === name);
           const text = firstRecord?.result.text ?? '';
-          this.history.push({ role: 'tool', content: text, tool_call_id: toolCall.id });
+          this.history.push({ role: 'tool', content: text, tool_call_id: toolCall.id, name });
           continue;
         }
         seenThisRound.add(key);
@@ -423,7 +445,7 @@ export class Conversation {
           const shouldProceed = await this.onToolCall(name, args);
           if (!shouldProceed) {
             const cancelledResult = mkTextResult('cancelled by hook');
-            this.history.push({ role: 'tool', content: cancelledResult.text, tool_call_id: toolCall.id });
+            this.history.push({ role: 'tool', content: cancelledResult.text, tool_call_id: toolCall.id, name });
             allToolCalls.push({ name, args, result: cancelledResult, durationMs: 0 });
             yield { type: 'tool_end', name, result: cancelledResult, durationMs: 0 };
             continue;
@@ -441,7 +463,7 @@ export class Conversation {
           await this.onToolResult(name, result);
         }
 
-        this.history.push({ role: 'tool', content: result.text, tool_call_id: toolCall.id });
+        this.history.push({ role: 'tool', content: result.text, tool_call_id: toolCall.id, name });
         allToolCalls.push({ name, args, result, durationMs });
         yield { type: 'tool_end', name, result, durationMs };
       }
@@ -517,6 +539,7 @@ export class Conversation {
           role: 'tool',
           content: cancelledResult.text,
           tool_call_id: toolCall.id,
+          name,
         });
         return { name, args, result: cancelledResult, durationMs: 0 };
       }
@@ -537,6 +560,7 @@ export class Conversation {
       role: 'tool',
       content: result.text,
       tool_call_id: toolCall.id,
+      name,
     });
 
     return { name, args, result, durationMs };

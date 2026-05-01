@@ -18,6 +18,9 @@ export interface ChatMessage {
   readonly content: string | readonly ContentPart[] | null;
   readonly tool_calls?: readonly ToolCall[] | undefined;
   readonly tool_call_id?: string | undefined;
+  // Defense in depth: deprecated in OpenAI v2 spec but accepted by Google/legacy
+  // OpenAI when tool_call_id is missing or rejected by the provider.
+  readonly name?: string | undefined;
 }
 
 export interface ToolCall {
