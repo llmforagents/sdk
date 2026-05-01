@@ -90,7 +90,13 @@ export class Conversation {
         throw new LLM4AgentsError('Empty response from LLM', 'api_error', undefined, undefined);
       }
 
-      const assistantMessage = choice.message;
+      // Normalize content: some providers (OpenAI, Gemini) return content: null when
+      // a message is purely tool_calls. Strict backend validators reject null on
+      // subsequent rounds; coerce to '' so the next request stays valid.
+      const assistantMessage: ChatMessage = {
+        ...choice.message,
+        content: choice.message.content ?? '',
+      };
       this.history.push(assistantMessage);
 
       if (!assistantMessage.tool_calls || assistantMessage.tool_calls.length === 0) {
@@ -282,7 +288,7 @@ export class Conversation {
 
       const assistantMessage: ChatMessage = {
         role: 'assistant',
-        content: streamedContent || null,
+        content: streamedContent,
         ...(toolCallsArray.length > 0 ? { tool_calls: toolCallsArray } : {}),
       };
       this.history.push(assistantMessage);
@@ -573,7 +579,7 @@ export class Conversation {
 
     const assistantMessage: ChatMessage = {
       role: 'assistant',
-      content: textWithoutBlocks || null,
+      content: textWithoutBlocks,
       ...(toolCalls.length > 0 ? { tool_calls: [...toolCalls] } : {}),
     };
 
