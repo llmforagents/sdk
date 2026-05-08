@@ -3,6 +3,7 @@ import { HttpTransport } from './transport/http.js';
 import { McpTransport } from './transport/mcp.js';
 import { ChatCompletions } from './chat/completions.js';
 import { Conversation } from './chat/conversation.js';
+import { Embeddings } from './embeddings/embeddings.js';
 import { Wallets } from './wallets/wallets.js';
 import { Transfer } from './transfer/transfer.js';
 import { Tools } from './tools/tools.js';
@@ -23,6 +24,7 @@ export class LLM4AgentsClient {
   readonly transfer: Transfer;
   readonly tools: Tools;
   readonly agents: Agents;
+  readonly embeddings: Embeddings;
   readonly models: { readonly list: (params?: ModelListParams) => Promise<ModelListResult> };
 
   constructor(opts: ClientOptions) {
@@ -44,6 +46,7 @@ export class LLM4AgentsClient {
     this.transfer = new Transfer(http);
     this.tools = tools;
     this.agents = new Agents(http);
+    this.embeddings = new Embeddings(http);
     this.models = {
       list: (params?: ModelListParams) => {
         const qs = params?.search ? { search: params.search } : undefined;

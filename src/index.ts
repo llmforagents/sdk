@@ -52,6 +52,15 @@ export type {
 // === Types — Agents ===
 export type { AgentRegistration, AgentRegistrationParams } from './agents/agents.js';
 
+// === Types — Embeddings ===
+export type {
+  EmbeddingsCreateParams,
+  EmbeddingsResponse,
+  EmbeddingItem,
+  EmbeddingsUsage,
+  EmbeddingsOptions,
+} from './embeddings/types.js';
+
 // === Types — Tools ===
 export type {
   ToolDefinition,

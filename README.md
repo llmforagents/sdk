@@ -346,6 +346,28 @@ const filtered = await client.models.list({ search: 'claude' })
 
 `models.list()` returns a `ModelListResult` with `.models` (array), `.requestId` (string | undefined), and `.feePct` (number | undefined — the platform fee percentage applied as a default for models that don't override it).
 
+## Embeddings
+
+```typescript
+const res = await client.embeddings.create({
+  model: 'openai/text-embedding-3-large',
+  input: 'How many vectors fit in a haystack?',
+})
+console.log(res.data[0].embedding.length)  // → e.g. 3072
+console.log(res.usage.prompt_tokens, res.model)
+
+// Batch input
+const batch = await client.embeddings.create({
+  model: 'openai/text-embedding-3-small',
+  input: ['first', 'second', 'third'],
+})
+batch.data.forEach((item) => console.log(item.index, item.embedding))
+```
+
+`embeddings.create()` accepts an OpenAI-compatible request — `model` (slug), `input` (string or string array, max 2048 entries), and the optional `encoding_format`, `dimensions`, and `user` fields. The response shape mirrors OpenAI's: `{ object, data: [{ embedding, index, object }], model, usage: { prompt_tokens, total_tokens } }`. Embeddings have no completion tokens, so billing is input-only — the actual model that responded is reported in the `X-Model-Used` response header (also surfaced via the `onMeta` callback).
+
+> **Catalog:** Embedding models do not appear in OpenRouter's public catalog endpoint, so the proxy maintains them by hand. New embedding models can be added through the admin panel — see `model_type='embedding'` rows.
+
 ## Error Handling
 
 All errors are instances of `LLM4AgentsError`:
@@ -392,6 +414,11 @@ const client = new LLM4AgentsClient({
   timeout: 30_000,                                  // optional, ms, default 30s
 })
 ```
+
+## What's New in v2.4
+
+- **`client.embeddings.create()`** — OpenAI-compatible embeddings against `POST /v1/embeddings`. Pass a string or array of up to 2048 strings; receive `{ data: EmbeddingItem[], model, usage }` with input-only billing. Embedding-model catalog is curated by hand on the server because OpenRouter omits embedding models from its public catalog endpoint.
+- New types exported: `EmbeddingsCreateParams`, `EmbeddingsResponse`, `EmbeddingItem`, `EmbeddingsUsage`, `EmbeddingsOptions`.
 
 ## Migration from v1.x
 
