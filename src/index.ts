@@ -61,6 +61,36 @@ export type {
   EmbeddingsOptions,
 } from './embeddings/types.js';
 
+// === x402 walk-up payment ===
+export {
+  X402PaymentRequiredError,
+  USDC_ADDRESS_BY_NETWORK,
+  USDC_DOMAIN_NAME_BY_NETWORK,
+  X402_CAIP2_BY_NETWORK,
+} from './x402/types.js';
+export type {
+  Signer,
+  PaymentConfig,
+  PaymentPayload,
+  PaymentRequirements,
+  X402Network,
+  X402Receipt,
+} from './x402/types.js';
+export {
+  viemAccountToSigner,
+  buildTransferWithAuthorizationTypedData,
+  generateNonce,
+  TRANSFER_WITH_AUTHORIZATION_TYPES,
+} from './x402/signer.js';
+export {
+  signFromRequirements,
+  encodePaymentHeader,
+  decodePaymentRequiredHeader,
+  pickSupportedRequirements,
+  type SignedPayment,
+} from './x402/payment.js';
+export type { X402Namespace, SignArgs } from './x402/client.js';
+
 // === Types — Tools ===
 export type {
   ToolDefinition,

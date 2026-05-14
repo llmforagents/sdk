@@ -122,6 +122,12 @@ export interface CompletionOptions {
   readonly signal?: AbortSignal | undefined;
   readonly onMeta?: ((meta: ResponseMeta) => void) | undefined;
   readonly onFinalUsage?: ((usage: FinalUsage) => void) | undefined;
+  /**
+   * Fires when the proxy emits a trailing `event: x402-receipt` chunk in
+   * the SSE stream (only present in x402 walk-up mode). Carries the
+   * on-chain settlement transaction hash, network, amount, and payer.
+   */
+  readonly onX402Receipt?: ((receipt: import('../x402/types.js').X402Receipt) => void) | undefined;
 }
 
 export type StreamEvent =
@@ -131,6 +137,13 @@ export type StreamEvent =
   | { readonly type: 'tool_start'; readonly name: string; readonly args: Readonly<Record<string, unknown>> }
   | { readonly type: 'tool_end'; readonly name: string; readonly result: McpToolResult; readonly durationMs: number }
   | { readonly type: 'fallback'; readonly reason: 'tools_ignored'; readonly model: string }
+  | {
+      readonly type: 'x402_receipt';
+      readonly transaction: string;
+      readonly network: string;
+      readonly amount: string;
+      readonly payer: string;
+    }
   | { readonly type: 'done'; readonly response: ConversationResponse };
 
 export interface ToolCallRecord {

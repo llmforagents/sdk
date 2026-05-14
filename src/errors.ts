@@ -11,6 +11,10 @@ export type ErrorCode =
   | 'context_overflow'
   // Billing
   | 'insufficient_balance'
+  // x402 walk-up payment (distinct from `insufficient_balance` which is
+  // for Bearer agents whose pre-deposited balance is too low — this one
+  // means the caller didn't present a valid X-PAYMENT header at all).
+  | 'x402_payment_required'
   // Transfer (gasless)
   | 'gas_spike'
   | 'signature_mismatch'

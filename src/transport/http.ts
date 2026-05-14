@@ -1,9 +1,22 @@
 import { LLM4AgentsError, mapHttpError } from '../errors.js';
+import type { PaymentConfig, X402Network } from '../x402/types.js';
+import { X402PaymentRequiredError } from '../x402/types.js';
+import {
+  signFromRequirements,
+  decodePaymentRequiredHeader,
+  pickSupportedRequirements,
+} from '../x402/payment.js';
+
+/** Routes that the proxy currently accepts x402 payment on. */
+const X402_ALLOWED_PATHS = new Set<string>(['/v1/chat/completions']);
 
 export interface HttpTransportOptions {
   readonly baseUrl: string;
+  /** Required in Bearer mode; ignored in x402 mode. */
   readonly apiKey: string;
   readonly timeout: number;
+  /** Defaults to `{ mode: 'bearer' }`. */
+  readonly payment?: PaymentConfig | undefined;
 }
 
 export interface StreamResponse {
@@ -16,17 +29,150 @@ export class HttpTransport {
   private readonly baseUrl: string;
   private readonly apiKey: string;
   private readonly timeout: number;
+  private readonly payment: PaymentConfig;
 
   constructor(opts: HttpTransportOptions) {
     this.baseUrl = opts.baseUrl;
     this.apiKey = opts.apiKey;
     this.timeout = opts.timeout;
+    this.payment = opts.payment ?? { mode: 'bearer' };
+  }
+
+  /** Network used when in x402 mode (defaults to `'base'`). */
+  private get x402Network(): X402Network {
+    return this.payment.mode === 'x402' ? this.payment.network ?? 'base' : 'base';
+  }
+
+  /**
+   * Compose the auth header(s) for a given path. In Bearer mode this is
+   * unconditional. In x402 mode it's a probe-and-sign per call: an
+   * unauthenticated POST first (to read the live `PAYMENT-REQUIRED`
+   * header), then re-POST with `X-PAYMENT`. We expose `probe` so callers
+   * who already have requirements (e.g. via `client.x402.probe()`) can
+   * skip the second round-trip.
+   */
+  private async resolveAuthHeaders(
+    path: string,
+    method: string,
+    body: unknown,
+  ): Promise<Record<string, string>> {
+    if (this.payment.mode === 'bearer') {
+      return { authorization: `Bearer ${this.apiKey}` };
+    }
+    if (!X402_ALLOWED_PATHS.has(path)) {
+      throw new LLM4AgentsError(
+        `x402 mode is only available on ${[...X402_ALLOWED_PATHS].join(', ')}; ` +
+          `cannot use it on ${method} ${path}. Instantiate a Bearer-mode client for this endpoint.`,
+        'x402_payment_required',
+        undefined,
+        undefined,
+      );
+    }
+    const requirements = await this.probeForRequirements(path, body);
+    const signed = await signFromRequirements({
+      signer: this.payment.signer,
+      network: this.x402Network,
+      requirements,
+      ...(this.payment.payTo !== undefined ? { recipientOverride: this.payment.payTo } : {}),
+    });
+    return { 'x-payment': signed.encodedHeader };
+  }
+
+  /** Issue an unauthenticated POST to read the `PAYMENT-REQUIRED` header. */
+  private async probeForRequirements(path: string, body: unknown) {
+    const res = await fetch(`${this.baseUrl}${path}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: this.buildSignal(),
+    });
+    if (res.status !== 402) {
+      const text = await res.text().catch(() => '');
+      throw new LLM4AgentsError(
+        `x402 probe expected HTTP 402 but got ${res.status}: ${text.slice(0, 200)}`,
+        'api_error',
+        res.status,
+        res.headers.get('x-request-id') ?? undefined,
+      );
+    }
+    return this.parsePaymentRequiredFromResponse(res);
+  }
+
+  /**
+   * Decode the `PAYMENT-REQUIRED` response header (preferred) or, as
+   * fallback, the JSON body's `accepts[]`. Picks the first scheme this
+   * SDK supports (currently `exact` only).
+   */
+  private async parsePaymentRequiredFromResponse(res: Response) {
+    const headerValue = res.headers.get('payment-required');
+    if (headerValue !== null) {
+      const decoded = decodePaymentRequiredHeader(headerValue);
+      return pickSupportedRequirements(decoded.accepts);
+    }
+    const text = await res.text().catch(() => '');
+    let parsed: { accepts?: unknown } = {};
+    try {
+      parsed = JSON.parse(text) as { accepts?: unknown };
+    } catch {
+      throw new LLM4AgentsError(
+        'x402 probe: server returned 402 with no PAYMENT-REQUIRED header and no parseable JSON body',
+        'api_error',
+        res.status,
+        res.headers.get('x-request-id') ?? undefined,
+      );
+    }
+    if (!Array.isArray(parsed.accepts)) {
+      throw new LLM4AgentsError(
+        'x402 probe: 402 body has no accepts[] array',
+        'api_error',
+        res.status,
+        res.headers.get('x-request-id') ?? undefined,
+      );
+    }
+    return pickSupportedRequirements(parsed.accepts as never);
+  }
+
+  /**
+   * Inspect a 402 response and, if it carries x402 paymentRequirements,
+   * throw a typed error. Otherwise (Bearer mode + insufficient balance)
+   * defer to mapHttpError.
+   */
+  private throwFor402(res: Response, body: string): never {
+    const requestId = res.headers.get('x-request-id') ?? undefined;
+    const headerValue = res.headers.get('payment-required');
+    if (headerValue !== null) {
+      const decoded = decodePaymentRequiredHeader(headerValue);
+      throw new X402PaymentRequiredError(
+        body || 'Payment required',
+        decoded.accepts,
+        decoded.x402Version,
+        res.status,
+        requestId,
+      );
+    }
+    try {
+      const parsed = JSON.parse(body) as { accepts?: unknown; x402Version?: unknown };
+      if (Array.isArray(parsed.accepts) && typeof parsed.x402Version === 'number') {
+        throw new X402PaymentRequiredError(
+          body,
+          parsed.accepts as never,
+          parsed.x402Version,
+          res.status,
+          requestId,
+        );
+      }
+    } catch (e) {
+      if (e instanceof X402PaymentRequiredError) throw e;
+      // fall through to insufficient_balance
+    }
+    throw mapHttpError(res.status, body, requestId);
   }
 
   async post<T>(path: string, body: unknown, signal?: AbortSignal): Promise<T> {
     const { res, text } = await this.request('POST', path, body, signal);
 
     if (!res.ok) {
+      if (res.status === 402) this.throwFor402(res, text);
       throw mapHttpError(res.status, text, res.headers.get('x-request-id') ?? undefined);
     }
 
@@ -46,6 +192,7 @@ export class HttpTransport {
     const { res, text } = await this.request('POST', path, body, signal);
 
     if (!res.ok) {
+      if (res.status === 402) this.throwFor402(res, text);
       throw mapHttpError(res.status, text, res.headers.get('x-request-id') ?? undefined);
     }
 
@@ -103,13 +250,14 @@ export class HttpTransport {
   }
 
   async postStream(path: string, body: unknown, signal?: AbortSignal): Promise<StreamResponse> {
+    const authHeaders = await this.resolveAuthHeaders(path, 'POST', body);
     let res: Response;
     try {
       res = await fetch(`${this.baseUrl}${path}`, {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
-          'authorization': `Bearer ${this.apiKey}`,
+          ...authHeaders,
         },
         body: JSON.stringify(body),
         signal: this.buildSignal(signal),
@@ -120,6 +268,7 @@ export class HttpTransport {
 
     if (!res.ok) {
       const text = await res.text();
+      if (res.status === 402) this.throwFor402(res, text);
       throw mapHttpError(res.status, text, res.headers.get('x-request-id') ?? undefined);
     }
 
@@ -145,13 +294,14 @@ export class HttpTransport {
     body: unknown,
     signal?: AbortSignal,
   ): Promise<{ res: Response; text: string }> {
+    const authHeaders = await this.resolveAuthHeaders(path, method, body);
     let res: Response;
     try {
       res = await fetch(`${this.baseUrl}${path}`, {
         method,
         headers: {
           'content-type': 'application/json',
-          'authorization': `Bearer ${this.apiKey}`,
+          ...authHeaders,
         },
         body: JSON.stringify(body),
         signal: this.buildSignal(signal),

@@ -1,6 +1,6 @@
 {
   "name": "@llmforagents/sdk",
-  "version": "2.4.1",
+  "version": "2.5.0",
   "description": "Unified TypeScript SDK for LLM4Agents — chat, wallets, gasless transfers, and MCP tools",
   "type": "module",
   "main": "./dist/index.cjs",
@@ -31,10 +31,14 @@
     "prepublishOnly": "npm run typecheck && npm run test && npm run build"
   },
   "peerDependencies": {
-    "ethers": "^6.0.0"
+    "ethers": "^6.0.0",
+    "viem": "^2.30.0"
   },
   "peerDependenciesMeta": {
     "ethers": {
+      "optional": true
+    },
+    "viem": {
       "optional": true
     }
   },
@@ -42,6 +46,7 @@
     "ethers": "^6.13.0",
     "tsup": "^8.0.0",
     "typescript": "^5.5.0",
+    "viem": "^2.30.0",
     "vitest": "^2.0.0"
   },
   "license": "MIT",

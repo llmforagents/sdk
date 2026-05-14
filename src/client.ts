@@ -9,6 +9,7 @@ import { Transfer } from './transfer/transfer.js';
 import { Tools } from './tools/tools.js';
 import { Agents } from './agents/agents.js';
 import type { ConversationOptions } from './chat/types.js';
+import { X402Namespace } from './x402/client.js';
 
 const DEFAULT_BASE_URL = 'https://api.llm4agents.com';
 const DEFAULT_MCP_URL = 'https://mcp.llm4agents.com/mcp';
@@ -26,13 +27,26 @@ export class LLM4AgentsClient {
   readonly agents: Agents;
   readonly embeddings: Embeddings;
   readonly models: { readonly list: (params?: ModelListParams) => Promise<ModelListResult> };
+  /**
+   * Low-level x402 helpers (`sign`, `signFromRequirements`, `probe`).
+   * Throws on use when the client was constructed in Bearer mode.
+   */
+  readonly x402: X402Namespace;
 
   constructor(opts: ClientOptions) {
     const baseUrl = opts.baseUrl ?? DEFAULT_BASE_URL;
     const mcpUrl = opts.mcpUrl ?? DEFAULT_MCP_URL;
     const timeout = opts.timeout ?? DEFAULT_TIMEOUT;
+    const payment = opts.payment ?? { mode: 'bearer' as const };
 
-    const http = new HttpTransport({ baseUrl, apiKey: opts.apiKey, timeout });
+    if (payment.mode === 'bearer' && (opts.apiKey === undefined || opts.apiKey === '')) {
+      throw new Error(
+        'LLM4AgentsClient: apiKey is required in Bearer mode. ' +
+          'Pass an `apiKey` from agent registration, or switch to x402 mode via payment: { mode: "x402", signer }.',
+      );
+    }
+
+    const http = new HttpTransport({ baseUrl, apiKey: opts.apiKey, timeout, payment });
     const mcp = new McpTransport({ mcpUrl, apiKey: opts.apiKey, timeout: MCP_TIMEOUT });
 
     const completions = new ChatCompletions(http);
@@ -58,5 +72,6 @@ export class LLM4AgentsClient {
           }));
       },
     };
+    this.x402 = new X402Namespace(payment, baseUrl);
   }
 }
