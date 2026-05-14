@@ -424,8 +424,54 @@ try {
 > are currently supported. The USDC EIP-712 domain name differs between them
 > (`USD Coin` vs `USDC`); `viemAccountToSigner` handles this automatically.
 
-> **Endpoints:** Only `POST /v1/chat/completions` accepts x402. All other
-> endpoints (`/v1/embeddings`, `/api/v1/wallets/*`, etc.) require Bearer auth.
+> **Endpoints accepting x402** (signed per-call USDC):
+> - `POST /v1/chat/completions` — chat with any model (per-token signed upper bound)
+> - `POST /v1/scrape/{markdown,fetch_html,links,screenshot,pdf,extract}` — one-shot scraping
+> - `POST /v1/search/{google,news,maps,batch}` — Google search (Serper)
+> - `POST /v1/image/{generate,edit,analyze}` — image generation / edit / vision
+>
+> Per-call x402 prices are seeded ~10% below x402engine.app reference rates
+> (e.g. scrape markdown ~$0.0045, screenshot ~$0.009, image gen ~$0.0135-$0.045).
+> Prices are admin-editable from the operator panel without redeploy.
+>
+> Browser sessions (`session_*`) and other endpoints (`/v1/embeddings`,
+> `/api/v1/wallets/*`, etc.) stay **Bearer-only** — sessions are
+> pre-deposit by design.
+
+### REST scrape / search / image with x402
+
+The same `payment: { mode: 'x402', signer, network }` client config
+that works for chat completions also works for the MCP REST surface.
+Use the bundled MCP client methods if you prefer the JSON-RPC API; use
+fetch / a direct HTTP client for the REST surface:
+
+```typescript
+import { LLM4AgentsClient } from '@llmforagents/sdk'
+import { privateKeyToAccount } from 'viem/accounts'
+import { viemAccountToSigner } from '@llmforagents/sdk'
+
+const x402 = new LLM4AgentsClient({
+  apiKey: '',
+  payment: {
+    mode: 'x402',
+    signer: viemAccountToSigner(privateKeyToAccount('0xYOUR_KEY')),
+    network: 'base-sepolia',
+  },
+})
+
+// Probe + sign + retry handled automatically by the transport
+const markdown = await x402.x402.sign().then((signed) =>
+  fetch('https://api.llm4agents.com/v1/scrape/markdown', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-payment': signed.encodedHeader },
+    body: JSON.stringify({ url: 'https://example.com' }),
+  }).then((r) => r.json()),
+)
+```
+
+The MCP tools accessor (`client.tools.scraper.markdown(...)` etc.)
+currently uses Bearer auth via the MCP transport; the REST surface
+above is the path for walk-up.
 
 ## MCP Tools
 
@@ -587,6 +633,11 @@ const client = new LLM4AgentsClient({
   `USDC_ADDRESS_BY_NETWORK`, `USDC_DOMAIN_NAME_BY_NETWORK`, `X402_CAIP2_BY_NETWORK`,
   `TRANSFER_WITH_AUTHORIZATION_TYPES`, and types `Signer`, `PaymentConfig`,
   `PaymentRequirements`, `PaymentPayload`, `X402Network`, `X402Receipt`.
+- **x402 allowlist extended** to the MCP REST surface — clients in x402
+  mode can now hit `/v1/scrape/*`, `/v1/search/*`, and `/v1/image/*` in
+  addition to chat. Prices are admin-editable in cents from the
+  operator panel (parallel `value` for balance / `x402_value` for
+  walk-up per tool).
 
 ## What's New in v2.4
 
