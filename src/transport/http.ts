@@ -8,7 +8,36 @@ import {
 } from '../x402/payment.js';
 
 /** Routes that the proxy currently accepts x402 payment on. */
-const X402_ALLOWED_PATHS = new Set<string>(['/v1/chat/completions']);
+/**
+ * Routes that the proxy accepts x402 walk-up payment on.
+ *
+ * - `/v1/chat/completions` — LLM chat (per-token, signed upper bound).
+ * - `/v1/scrape/*` — scraper-worker one-shots forwarded by the main proxy:
+ *   markdown, fetch_html, screenshot, pdf, extract, links.
+ * - `/v1/search/*` — search-worker tools: google, news, maps, batch.
+ * - `/v1/image/*` — image tools: generate, edit, analyze.
+ *
+ * Browser sessions (`session_*` MCP tools) are intentionally NOT in this
+ * allowlist — sessions stay Bearer-only because the launch + per-30s +
+ * per-action billing model is fundamentally incompatible with a single
+ * per-call signed authorization. Use a Bearer-mode client for sessions.
+ */
+const X402_ALLOWED_PATHS = new Set<string>([
+  '/v1/chat/completions',
+  '/v1/scrape/fetch_html',
+  '/v1/scrape/markdown',
+  '/v1/scrape/links',
+  '/v1/scrape/screenshot',
+  '/v1/scrape/pdf',
+  '/v1/scrape/extract',
+  '/v1/search/google',
+  '/v1/search/news',
+  '/v1/search/maps',
+  '/v1/search/batch',
+  '/v1/image/generate',
+  '/v1/image/edit',
+  '/v1/image/analyze',
+]);
 
 export interface HttpTransportOptions {
   readonly baseUrl: string;

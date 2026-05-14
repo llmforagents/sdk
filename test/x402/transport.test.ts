@@ -167,4 +167,43 @@ describe('HttpTransport — x402 mode', () => {
     await expect(http.post('/api/v1/wallets/generate', {})).rejects.toBeInstanceOf(LLM4AgentsError);
     await expect(http.post('/v1/embeddings', {})).rejects.toThrow(/x402 mode is only available/);
   });
+
+  it('allows x402 on /v1/scrape/markdown (probe + sign + retry)', async () => {
+    const signer = viemAccountToSigner(privateKeyToAccount(TEST_KEY));
+    fetchSpy = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response(JSON.stringify(makeRequirementsBody()), { status: 402 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ markdown: '# Hello' }), { status: 200 }));
+
+    const http = new HttpTransport({
+      baseUrl: 'https://api.test',
+      apiKey: '',
+      timeout: 5000,
+      payment: { mode: 'x402', signer, network: 'base-sepolia' },
+    });
+    const res = await http.post<{ markdown: string }>('/v1/scrape/markdown', { url: 'https://example.com' });
+    expect(res.markdown).toBe('# Hello');
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    const signedInit = fetchSpy.mock.calls[1]![1] as RequestInit;
+    const signedHeaders = signedInit.headers as Record<string, string>;
+    expect(signedHeaders['x-payment']).toBeTruthy();
+  });
+
+  it.each([
+    '/v1/scrape/fetch_html',
+    '/v1/search/google',
+    '/v1/image/generate',
+  ])('allows x402 on %s (allowlist parameterized smoke)', async (path) => {
+    const signer = viemAccountToSigner(privateKeyToAccount(TEST_KEY));
+    fetchSpy = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response(JSON.stringify(makeRequirementsBody()), { status: 402 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+
+    const http = new HttpTransport({
+      baseUrl: 'https://api.test',
+      apiKey: '',
+      timeout: 5000,
+      payment: { mode: 'x402', signer, network: 'base-sepolia' },
+    });
+    await expect(http.post(path, {})).resolves.toEqual({ ok: true });
+  });
 });
