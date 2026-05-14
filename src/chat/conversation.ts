@@ -235,6 +235,13 @@ export class Conversation {
       const messages = this.buildMessages();
 
       let roundMeta: ResponseMeta | undefined;
+      // Captured by the parseSSE callback when the proxy emits a trailing
+      // x402-receipt event (walk-up mode only). We yield it as a typed
+      // event after the stream loop unwinds so consumers can correlate
+      // the receipt with the chat content that was paid for.
+      let receivedReceipt:
+        | { transaction: string; network: string; amount: string; payer: string }
+        | undefined;
       const chunks = await completions.create({
         model: this.model,
         messages,
@@ -243,6 +250,7 @@ export class Conversation {
       }, {
         signal: this.signal,
         onMeta: (meta) => { roundMeta = meta; },
+        onX402Receipt: (receipt) => { receivedReceipt = receipt; },
       });
 
       let streamedContent = '';
@@ -336,6 +344,7 @@ export class Conversation {
 
           if (fallbackResult.toolCalls.length === 0) {
             yield { type: 'text', content: fallbackResult.textWithoutBlocks };
+            if (receivedReceipt) yield { type: 'x402_receipt', ...receivedReceipt };
             yield {
               type: 'done',
               response: {
@@ -393,6 +402,7 @@ export class Conversation {
           continue;
         }
 
+        if (receivedReceipt) yield { type: 'x402_receipt', ...receivedReceipt };
         yield {
           type: 'done',
           response: {
@@ -473,6 +483,7 @@ export class Conversation {
         tc.result.content.some((c) => c.type === 'image'),
       );
       if (hasImage) {
+        if (receivedReceipt) yield { type: 'x402_receipt', ...receivedReceipt };
         yield {
           type: 'done',
           response: {
