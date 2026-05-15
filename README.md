@@ -19,6 +19,14 @@ npm install @llmforagents/sdk
 npm install ethers   # only needed for client.transfer
 ```
 
+`viem` is an optional peer dependency, required only for x402 walk-up payments
+when using a `viem.Account`. The SDK also accepts any custom `Signer`
+implementation (see [x402 Walk-up Payment](#x402-walk-up-payment) below):
+
+```bash
+npm install viem     # only needed for x402 with viem accounts
+```
+
 ## Get an API Key
 
 1. Go to **[api.llm4agents.com/docs](https://api.llm4agents.com/docs)**
@@ -273,6 +281,198 @@ const result = await client.transfer.submit(quote, '0xPrivateKey...')
 console.log(result.txHash)
 ```
 
+## x402 Walk-up Payment
+
+The proxy supports the [x402 protocol](https://x402.org) for per-request stablecoin
+payments on `POST /v1/chat/completions`. Instead of pre-funding an agent account,
+the client signs an EIP-3009 `TransferWithAuthorization` for USDC on Base /
+Base-Sepolia, attaches it as an `X-PAYMENT` header, and the proxy settles
+on-chain after the response is delivered.
+
+Two modes are mutually exclusive — pick one at construction time:
+
+| Mode | Set via | Required | Use when |
+|---|---|---|---|
+| **Bearer** (default) | omit `payment` or `payment: { mode: 'bearer' }` | `apiKey` | You have an agent and a pre-funded balance |
+| **x402 walk-up** | `payment: { mode: 'x402', signer }` | `signer` (viem.Account or custom) | You want one-shot calls billed per-request from a wallet, no agent registration |
+
+### Bearer vs x402 — at a glance
+
+```typescript
+// Bearer (existing) — pre-funded agent
+const bearer = new LLM4AgentsClient({ apiKey: 'sk-proxy-...' })
+
+// x402 walk-up — pay per call from a wallet
+import { privateKeyToAccount } from 'viem/accounts'
+import { viemAccountToSigner } from '@llmforagents/sdk'
+
+const account = privateKeyToAccount('0xYOUR_PRIVATE_KEY')
+const x402 = new LLM4AgentsClient({
+  apiKey: '',                                    // not used in x402 mode
+  payment: {
+    mode: 'x402',
+    signer: viemAccountToSigner(account),
+    network: 'base-sepolia',                     // or 'base' for mainnet
+  },
+})
+
+// Same API surface — the SDK probes the proxy for a 402, signs an
+// EIP-3009 authorization, and retries with X-PAYMENT automatically.
+const res = await x402.chat.completions.create({
+  model: 'openai/gpt-4o-mini',
+  messages: [{ role: 'user', content: 'Hello' }],
+})
+```
+
+### Custom signers (no viem dependency)
+
+If you don't want to add `viem`, implement the `Signer` interface yourself —
+the SDK ships a `Signer` Port (Ports & Adapters) so any wallet stack works
+(ethers, hardware wallets, MPC, AWS KMS, …):
+
+```typescript
+import type { Signer } from '@llmforagents/sdk'
+
+const customSigner: Signer = {
+  address: '0xYourAddress...',
+  async signTypedData({ domain, types, primaryType, message }) {
+    // Return a 0x-prefixed 65-byte signature.
+    // Hardware wallet / KMS / ethers — your call.
+    return '0x...'
+  },
+}
+
+const client = new LLM4AgentsClient({
+  apiKey: '',
+  payment: { mode: 'x402', signer: customSigner, network: 'base' },
+})
+```
+
+### Streaming receipts
+
+x402-mode streaming responses end with a trailing SSE event after `[DONE]`
+containing the on-chain settlement receipt. The `Conversation.stream()` helper
+surfaces this as a typed event:
+
+```typescript
+const conv = x402.chat.conversation({ model: 'openai/gpt-4o-mini' })
+for await (const ev of conv.stream('Tell me a joke')) {
+  switch (ev.type) {
+    case 'text':         process.stdout.write(ev.content); break
+    case 'x402_receipt': console.log('\nsettled:', ev.transaction, ev.network); break
+    case 'done':         console.log('\n', ev.response.usage); break
+  }
+}
+```
+
+For the lower-level `chat.completions.create()` API, pass `onX402Receipt`:
+
+```typescript
+const stream = await x402.chat.completions.create(
+  { model: 'openai/gpt-4o-mini', messages: [...], stream: true },
+  {
+    onX402Receipt: (receipt) => {
+      console.log(`settled ${receipt.amount} on ${receipt.network}: ${receipt.transaction}`)
+    },
+  },
+)
+```
+
+### Lower-level helpers — `client.x402`
+
+For advanced use cases (custom HTTP client, signing without sending, inspecting
+the 402 response shape), the `client.x402` namespace exposes the building
+blocks:
+
+```typescript
+// Probe the proxy and get the typed PaymentRequirements
+const requirements = await x402.x402.probe()
+console.log(requirements.maxAmountRequired, requirements.network)
+
+// Probe + sign in one call — returns { paymentPayload, encodedHeader, requirements }
+const signed = await x402.x402.sign()
+// → signed.encodedHeader: base64-encoded X-PAYMENT value, ready to attach to a fetch()
+// → signed.paymentPayload: the parsed PaymentPayload (typed, useful for logging/debugging)
+// → signed.requirements: the proxy-advertised requirements the signature is bound to
+
+// Sign against caller-supplied requirements (no HTTP) — useful for testing
+// or batching signatures
+const signed2 = await x402.x402.signFromRequirements(requirements)
+```
+
+### Error handling
+
+When the proxy rejects payment (signature invalid, nonce reused, etc.) the SDK
+throws `X402PaymentRequiredError` carrying the typed requirements so the caller
+can re-sign with a different amount or network:
+
+```typescript
+import { X402PaymentRequiredError } from '@llmforagents/sdk'
+
+try {
+  await x402.chat.completions.create({ ... })
+} catch (err) {
+  if (err instanceof X402PaymentRequiredError) {
+    console.error('Payment rejected. accepted offers:', err.paymentRequirements)
+    console.error('x402 version:', err.x402Version)
+  }
+}
+```
+
+> **Networks:** `'base'` (mainnet, USDC `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913`)
+> and `'base-sepolia'` (testnet, USDC `0x036CbD53842c5426634e7929541eC2318f3dCF7e`)
+> are currently supported. The USDC EIP-712 domain name differs between them
+> (`USD Coin` vs `USDC`); `viemAccountToSigner` handles this automatically.
+
+> **Endpoints accepting x402** (signed per-call USDC):
+> - `POST /v1/chat/completions` — chat with any model (per-token signed upper bound)
+> - `POST /v1/scrape/{markdown,fetch_html,links,screenshot,pdf,extract}` — one-shot scraping
+> - `POST /v1/search/{google,news,maps,batch}` — Google search (Serper)
+> - `POST /v1/image/{generate,edit,analyze}` — image generation / edit / vision
+>
+> Per-call x402 prices are seeded ~10% below x402engine.app reference rates
+> (e.g. scrape markdown ~$0.0045, screenshot ~$0.009, image gen ~$0.0135-$0.045).
+> Prices are admin-editable from the operator panel without redeploy.
+>
+> Browser sessions (`session_*`) and other endpoints (`/v1/embeddings`,
+> `/api/v1/wallets/*`, etc.) stay **Bearer-only** — sessions are
+> pre-deposit by design.
+
+### REST scrape / search / image with x402
+
+The same `payment: { mode: 'x402', signer, network }` client config
+that works for chat completions also works for the MCP REST surface.
+Use the bundled MCP client methods if you prefer the JSON-RPC API; use
+fetch / a direct HTTP client for the REST surface:
+
+```typescript
+import { LLM4AgentsClient } from '@llmforagents/sdk'
+import { privateKeyToAccount } from 'viem/accounts'
+import { viemAccountToSigner } from '@llmforagents/sdk'
+
+const x402 = new LLM4AgentsClient({
+  apiKey: '',
+  payment: {
+    mode: 'x402',
+    signer: viemAccountToSigner(privateKeyToAccount('0xYOUR_KEY')),
+    network: 'base-sepolia',
+  },
+})
+
+// Probe + sign + retry handled automatically by the transport
+const markdown = await x402.x402.sign().then((signed) =>
+  fetch('https://api.llm4agents.com/v1/scrape/markdown', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-payment': signed.encodedHeader },
+    body: JSON.stringify({ url: 'https://example.com' }),
+  }).then((r) => r.json()),
+)
+```
+
+The MCP tools accessor (`client.tools.scraper.markdown(...)` etc.)
+currently uses Bearer auth via the MCP transport; the REST surface
+above is the path for walk-up.
+
 ## MCP Tools
 
 ### Scraper
@@ -408,12 +608,36 @@ try {
 
 ```typescript
 const client = new LLM4AgentsClient({
-  apiKey:  'sk-proxy-...',                          // required
+  apiKey:  'sk-proxy-...',                          // required for Bearer; empty in x402 mode
   baseUrl: 'https://api.llm4agents.com',            // optional
   mcpUrl:  'https://mcp.llm4agents.com/mcp',        // optional
   timeout: 30_000,                                  // optional, ms, default 30s
+  payment: { mode: 'bearer' },                      // optional, default; or { mode: 'x402', signer, network? }
 })
 ```
+
+## What's New in v2.5
+
+- **x402 walk-up payment mode** — pay per-request from a wallet on `/v1/chat/completions` without
+  registering an agent. Pass `payment: { mode: 'x402', signer, network }` to the client constructor.
+  Supports both `viem.Account` (via `viemAccountToSigner`) and any custom `Signer` implementation
+  (ethers, KMS, hardware wallets) thanks to the Ports & Adapters design.
+- Streaming responses emit a typed `x402_receipt` event after `[DONE]`, surfacing the on-chain
+  settlement receipt (`transaction`, `network`, `amount`, `payer`) to `conv.stream()` consumers
+  and the `onX402Receipt` callback on `chat.completions.create()`.
+- New `client.x402` namespace — `probe(path, body)`, `sign(requirements)`, and
+  `signFromRequirements(req)` helpers for low-level integrations.
+- New exports: `X402PaymentRequiredError`, `viemAccountToSigner`,
+  `buildTransferWithAuthorizationTypedData`, `generateNonce`, `signFromRequirements`,
+  `encodePaymentHeader`, `decodePaymentRequiredHeader`, `pickSupportedRequirements`,
+  `USDC_ADDRESS_BY_NETWORK`, `USDC_DOMAIN_NAME_BY_NETWORK`, `X402_CAIP2_BY_NETWORK`,
+  `TRANSFER_WITH_AUTHORIZATION_TYPES`, and types `Signer`, `PaymentConfig`,
+  `PaymentRequirements`, `PaymentPayload`, `X402Network`, `X402Receipt`.
+- **x402 allowlist extended** to the MCP REST surface — clients in x402
+  mode can now hit `/v1/scrape/*`, `/v1/search/*`, and `/v1/image/*` in
+  addition to chat. Prices are admin-editable in cents from the
+  operator panel (parallel `value` for balance / `x402_value` for
+  walk-up per tool).
 
 ## What's New in v2.4
 

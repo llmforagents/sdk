@@ -57,6 +57,14 @@ export class ChatCompletions {
     const decoder = new TextDecoder();
     let buffer = '';
     let lastUsage: StreamChunk['usage'] | undefined;
+    /**
+     * SSE events can be multi-line. The proxy emits a trailing
+     * `event: x402-receipt\ndata: {...}` chunk AFTER `data: [DONE]` in
+     * x402 walk-up streams. We remember the most recent `event: …` line
+     * so the next `data:` is dispatched to the right handler.
+     */
+    let currentEventName: string | null = null;
+    let doneSeen = false;
 
     try {
       while (true) {
@@ -70,8 +78,45 @@ export class ChatCompletions {
 
         for (const line of lines) {
           const trimmed = line.trim();
-          if (!trimmed || !trimmed.startsWith('data: ')) continue;
+          if (trimmed === '') {
+            // SSE event boundary — clear pending event name
+            currentEventName = null;
+            continue;
+          }
+          if (trimmed.startsWith('event: ')) {
+            currentEventName = trimmed.slice(7).trim();
+            continue;
+          }
+          if (!trimmed.startsWith('data: ')) continue;
           const data = trimmed.slice(6);
+
+          // Trailing x402 receipt — emit via callback and keep reading
+          // until the stream actually closes. Do NOT yield as a chat
+          // StreamChunk (different shape).
+          if (currentEventName === 'x402-receipt') {
+            try {
+              const receipt = JSON.parse(data) as {
+                transaction?: string;
+                network?: string;
+                amount?: string;
+                payer?: string;
+              };
+              if (options?.onX402Receipt && typeof receipt.transaction === 'string' && typeof receipt.network === 'string' && typeof receipt.amount === 'string' && typeof receipt.payer === 'string') {
+                options.onX402Receipt({
+                  transaction: receipt.transaction,
+                  network: receipt.network,
+                  amount: receipt.amount,
+                  payer: receipt.payer,
+                });
+              }
+            } catch {
+              // malformed receipt — ignore (the chat response was still
+              // delivered successfully; the receipt is best-effort)
+            }
+            currentEventName = null;
+            continue;
+          }
+
           if (data === '[DONE]') {
             if (lastUsage && options?.onFinalUsage) {
               options.onFinalUsage({
@@ -81,7 +126,10 @@ export class ChatCompletions {
                 ...(lastUsage.reasoning_tokens !== undefined ? { reasoningTokens: lastUsage.reasoning_tokens } : {}),
               });
             }
-            return;
+            doneSeen = true;
+            // Don't return — keep reading for a possible trailing
+            // x402-receipt event before the stream actually closes.
+            continue;
           }
 
           try {
@@ -94,7 +142,7 @@ export class ChatCompletions {
         }
       }
 
-      if (lastUsage && options?.onFinalUsage) {
+      if (!doneSeen && lastUsage && options?.onFinalUsage) {
         options.onFinalUsage({
           promptTokens: lastUsage.prompt_tokens,
           completionTokens: lastUsage.completion_tokens,
