@@ -289,6 +289,16 @@ the client signs an EIP-3009 `TransferWithAuthorization` for USDC on Base /
 Base-Sepolia, attaches it as an `X-PAYMENT` header, and the proxy settles
 on-chain after the response is delivered.
 
+> **Scope: this SDK signs x402 payments going OUT.** The SDK builds and signs
+> `X-PAYMENT` headers so your code can pay any x402-compatible server (the
+> llm4agents API, an x402engine endpoint, or any third party). It does **not**
+> include server-side helpers: there is no `verifyPayment`, no `settlePayment`,
+> no `requirePayment` middleware. If your agent needs to *receive* x402 payments
+> (run its own paywall), use a server library directly — `@x402/hono` for Hono,
+> `x402-express` for Express, `@coinbase/x402` for any framework, or the
+> [reference servers](https://github.com/x402-foundation/x402#servers) for
+> other stacks. See **Roadmap** below for the server-side direction.
+
 Two modes are mutually exclusive — pick one at construction time:
 
 | Mode | Set via | Required | Use when |
@@ -472,6 +482,27 @@ const markdown = await x402.x402.sign().then((signed) =>
 The MCP tools accessor (`client.tools.scraper.markdown(...)` etc.)
 currently uses Bearer auth via the MCP transport; the REST surface
 above is the path for walk-up.
+
+### Roadmap — server-side x402
+
+Today the SDK is **client-only**: it signs `X-PAYMENT` headers so an agent
+can pay for outbound services. The mirror direction (an agent serving its
+own paywalled endpoint and receiving x402 payments from third parties) is
+**not implemented** and not on the v2.x roadmap.
+
+If you want to monetize your agent with x402, use a server library directly:
+
+| Stack | Library |
+|---|---|
+| Hono (Cloudflare Workers, Bun, Deno, Node) | [`@x402/hono`](https://www.npmjs.com/package/@x402/hono) |
+| Express | [`x402-express`](https://www.npmjs.com/package/x402-express) |
+| Any framework (low-level, JWT-auth'd CDP facilitator) | [`@coinbase/x402`](https://www.npmjs.com/package/@coinbase/x402) |
+| Other stacks | see the [x402 reference servers](https://github.com/x402-foundation/x402#servers) |
+
+If a first-class `@llmforagents/sdk-server` (verify/settle/middleware
+helpers around `@coinbase/x402` with llm4agents-flavoured defaults) would
+help your use case, open an issue at
+[`llmforagents/sdk`](https://github.com/llmforagents/sdk/issues).
 
 ## MCP Tools
 
