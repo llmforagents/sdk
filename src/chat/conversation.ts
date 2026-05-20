@@ -145,7 +145,7 @@ export class Conversation {
             this.history.push(fallbackResult.assistantMessage);
 
             for (const toolCall of fallbackResult.toolCalls) {
-              const record = await this.executeToolCall(toolCall);
+              const record = await this.executeToolCall(toolCall, customDefs);
               allToolCalls.push(record);
             }
             roundCount++;
@@ -202,7 +202,7 @@ export class Conversation {
           continue;
         }
         seenThisRound.add(key);
-        const record = await this.executeToolCall(toolCall);
+        const record = await this.executeToolCall(toolCall, customDefs);
         allToolCalls.push(record);
       }
 
@@ -395,10 +395,14 @@ export class Conversation {
             const start = Date.now();
             let result: McpToolResult;
             if (this.customTools !== undefined) {
-              const customDefs = await this.customTools.getDefinitions();
+              // customDefs already computed once per turn at the top of the loop
               if (customDefs.some((d) => d.function.name === name)) {
                 const rawResult = await this.customTools.call(name, args, this.signal);
-                const text = typeof rawResult === 'string' ? rawResult : JSON.stringify(rawResult);
+                const text = typeof rawResult === 'string'
+                  ? rawResult
+                  : rawResult === undefined || rawResult === null
+                    ? ''
+                    : JSON.stringify(rawResult);
                 result = mkTextResult(text);
               } else if (this.tools !== undefined) {
                 result = await this.tools.call(name, args, this.signal);
@@ -488,12 +492,16 @@ export class Conversation {
         const start = Date.now();
         // Dispatch: custom tools first (by name match), then MCP tools, then not-available
         // Let errors from tools.call() / customTools.call() propagate — no try/catch
+        // customDefs already computed once per turn at the top of the loop
         let result: McpToolResult;
         if (this.customTools !== undefined) {
-          const customDefs = await this.customTools.getDefinitions();
           if (customDefs.some((d) => d.function.name === name)) {
             const rawResult = await this.customTools.call(name, args, this.signal);
-            const text = typeof rawResult === 'string' ? rawResult : JSON.stringify(rawResult);
+            const text = typeof rawResult === 'string'
+              ? rawResult
+              : rawResult === undefined || rawResult === null
+                ? ''
+                : JSON.stringify(rawResult);
             result = mkTextResult(text);
           } else if (this.tools !== undefined) {
             result = await this.tools.call(name, args, this.signal);
@@ -572,7 +580,10 @@ export class Conversation {
     return messages;
   }
 
-  private async executeToolCall(toolCall: ToolCall): Promise<ToolCallRecord> {
+  private async executeToolCall(
+    toolCall: ToolCall,
+    precomputedCustomDefs: readonly import('../tools/types.js').ToolDefinition[] = [],
+  ): Promise<ToolCallRecord> {
     const name = toolCall.function.name;
     let args: Readonly<Record<string, unknown>>;
     try {
@@ -597,12 +608,17 @@ export class Conversation {
 
     const start = Date.now();
     // Dispatch: custom tools first (by name match), then MCP tools, then not-available
+    // precomputedCustomDefs is hoisted from the per-turn getDefinitions() call to avoid
+    // calling it once per tool-call dispatch (O(1+N) → O(1) per turn).
     let result: McpToolResult;
     if (this.customTools !== undefined) {
-      const customDefs = await this.customTools.getDefinitions();
-      if (customDefs.some((d) => d.function.name === name)) {
+      if (precomputedCustomDefs.some((d) => d.function.name === name)) {
         const rawResult = await this.customTools.call(name, args, this.signal);
-        const text = typeof rawResult === 'string' ? rawResult : JSON.stringify(rawResult);
+        const text = typeof rawResult === 'string'
+          ? rawResult
+          : rawResult === undefined || rawResult === null
+            ? ''
+            : JSON.stringify(rawResult);
         result = mkTextResult(text);
       } else if (this.tools !== undefined) {
         result = await this.tools.call(name, args, this.signal);
