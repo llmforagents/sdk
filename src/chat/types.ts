@@ -164,10 +164,16 @@ export interface ConversationResponse {
   };
 }
 
+export interface CustomTools {
+  getDefinitions(): Promise<readonly ToolDefinition[]>;
+  call(name: string, args: Readonly<Record<string, unknown>>, signal?: AbortSignal): Promise<unknown>;
+}
+
 export interface ConversationOptions {
   readonly model: string;
   readonly system?: string | undefined;
   readonly tools?: Tools | undefined;
+  readonly customTools?: CustomTools | undefined;
   readonly history?: readonly ChatMessage[] | undefined;
   readonly signal?: AbortSignal | undefined;
   readonly onToolCall?: ((name: string, args: Readonly<Record<string, unknown>>) => boolean | Promise<boolean>) | undefined;

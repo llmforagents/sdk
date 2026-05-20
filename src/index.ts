@@ -27,6 +27,7 @@ export type {
   ConversationOptions,
   ConversationResponse,
   ToolCallRecord,
+  CustomTools,
 } from './chat/types.js';
 
 // === Types — Wallets ===

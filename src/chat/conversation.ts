@@ -9,6 +9,7 @@ import type {
   ChatResponse,
   ConversationOptions,
   ConversationResponse,
+  CustomTools,
   ResponseMeta,
   ToolCallRecord,
   ToolCall,
@@ -40,6 +41,7 @@ export class Conversation {
   private readonly model: string;
   private readonly system: string | undefined;
   private readonly tools: Tools | undefined;
+  private readonly customTools: CustomTools | undefined;
   private readonly signal: AbortSignal | undefined;
   private readonly onToolCall: ConversationOptions['onToolCall'];
   private readonly onToolResult: ConversationOptions['onToolResult'];
@@ -56,6 +58,7 @@ export class Conversation {
     this.model = opts.model;
     this.system = opts.system;
     this.tools = opts.tools;
+    this.customTools = opts.customTools;
     this.signal = opts.signal;
     this.onToolCall = opts.onToolCall;
     this.onToolResult = opts.onToolResult;
@@ -80,7 +83,10 @@ export class Conversation {
     let roundCount = 0;
 
     while (true) {
-      const toolDefs = this.tools ? await this.tools.getDefinitions() : undefined;
+      const mcpDefs = this.tools ? await this.tools.getDefinitions() : [];
+      const customDefs = this.customTools ? await this.customTools.getDefinitions() : [];
+      const allDefs = [...mcpDefs, ...customDefs];
+      const toolDefs = allDefs.length > 0 ? allDefs : undefined;
       const messages = this.buildMessages();
 
       const { data: response, headers } = await this.http.postWithMeta<ChatResponse>('/v1/chat/completions', {
@@ -231,7 +237,10 @@ export class Conversation {
     const completions = new ChatCompletions(this.http);
 
     while (true) {
-      const toolDefs = this.tools ? await this.tools.getDefinitions() : undefined;
+      const mcpDefs = this.tools ? await this.tools.getDefinitions() : [];
+      const customDefs = this.customTools ? await this.customTools.getDefinitions() : [];
+      const allDefs = [...mcpDefs, ...customDefs];
+      const toolDefs = allDefs.length > 0 ? allDefs : undefined;
       const messages = this.buildMessages();
 
       let roundMeta: ResponseMeta | undefined;
@@ -384,9 +393,23 @@ export class Conversation {
             }
 
             const start = Date.now();
-            const result = this.tools
-              ? await this.tools.call(name, args, this.signal)
-              : mkTextResult(`Tool ${name} not available`);
+            let result: McpToolResult;
+            if (this.customTools !== undefined) {
+              const customDefs = await this.customTools.getDefinitions();
+              if (customDefs.some((d) => d.function.name === name)) {
+                const rawResult = await this.customTools.call(name, args, this.signal);
+                const text = typeof rawResult === 'string' ? rawResult : JSON.stringify(rawResult);
+                result = mkTextResult(text);
+              } else if (this.tools !== undefined) {
+                result = await this.tools.call(name, args, this.signal);
+              } else {
+                result = mkTextResult(`Tool ${name} not available`);
+              }
+            } else if (this.tools !== undefined) {
+              result = await this.tools.call(name, args, this.signal);
+            } else {
+              result = mkTextResult(`Tool ${name} not available`);
+            }
             const durationMs = Date.now() - start;
 
             if (this.onToolResult) {
@@ -463,10 +486,25 @@ export class Conversation {
         }
 
         const start = Date.now();
-        // Let errors from tools.call() propagate — no try/catch
-        const result = this.tools
-          ? await this.tools.call(name, args, this.signal)
-          : mkTextResult(`Tool ${name} not available`);
+        // Dispatch: custom tools first (by name match), then MCP tools, then not-available
+        // Let errors from tools.call() / customTools.call() propagate — no try/catch
+        let result: McpToolResult;
+        if (this.customTools !== undefined) {
+          const customDefs = await this.customTools.getDefinitions();
+          if (customDefs.some((d) => d.function.name === name)) {
+            const rawResult = await this.customTools.call(name, args, this.signal);
+            const text = typeof rawResult === 'string' ? rawResult : JSON.stringify(rawResult);
+            result = mkTextResult(text);
+          } else if (this.tools !== undefined) {
+            result = await this.tools.call(name, args, this.signal);
+          } else {
+            result = mkTextResult(`Tool ${name} not available`);
+          }
+        } else if (this.tools !== undefined) {
+          result = await this.tools.call(name, args, this.signal);
+        } else {
+          result = mkTextResult(`Tool ${name} not available`);
+        }
         const durationMs = Date.now() - start;
 
         if (this.onToolResult) {
@@ -513,6 +551,7 @@ export class Conversation {
       model: this.model,
       system: this.system,
       tools: this.tools,
+      customTools: this.customTools,
       signal: this.signal,
       onToolCall: this.onToolCall,
       onToolResult: this.onToolResult,
@@ -557,10 +596,24 @@ export class Conversation {
     }
 
     const start = Date.now();
-    // Let errors from tools.call() propagate — no try/catch
-    const result = this.tools
-      ? await this.tools.call(name, args, this.signal)
-      : mkTextResult(`Tool ${name} not available`);
+    // Dispatch: custom tools first (by name match), then MCP tools, then not-available
+    let result: McpToolResult;
+    if (this.customTools !== undefined) {
+      const customDefs = await this.customTools.getDefinitions();
+      if (customDefs.some((d) => d.function.name === name)) {
+        const rawResult = await this.customTools.call(name, args, this.signal);
+        const text = typeof rawResult === 'string' ? rawResult : JSON.stringify(rawResult);
+        result = mkTextResult(text);
+      } else if (this.tools !== undefined) {
+        result = await this.tools.call(name, args, this.signal);
+      } else {
+        result = mkTextResult(`Tool ${name} not available`);
+      }
+    } else if (this.tools !== undefined) {
+      result = await this.tools.call(name, args, this.signal);
+    } else {
+      result = mkTextResult(`Tool ${name} not available`);
+    }
     const durationMs = Date.now() - start;
 
     if (this.onToolResult) {
