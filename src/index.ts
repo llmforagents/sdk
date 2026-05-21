@@ -115,3 +115,9 @@ export type {
   ImageEditParams,
   ImageAnalyzeParams,
 } from './tools/types.js';
+
+// === Types — MCP Server (arbitrary server connections) ===
+export type { McpServerConfig } from './tools/connect.js';
+export type { McpServerHandle } from './transport/mcp-stdio.js';
+export type { StdioServerConfig } from './transport/mcp-stdio.js';
+export type { HttpServerConfig } from './transport/mcp-http.js';
