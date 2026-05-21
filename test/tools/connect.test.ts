@@ -21,6 +21,7 @@ vi.mock('../../src/transport/mcp-http.js', () => ({
 import { connect, isHttpConfig } from '../../src/tools/connect.js'
 import { Tools } from '../../src/tools/tools.js'
 import { McpTransport } from '../../src/transport/mcp.js'
+import { LLM4AgentsClient } from '../../src/client.js'
 
 // ─── isHttpConfig ────────────────────────────────────────────────────────────
 
@@ -172,5 +173,25 @@ describe('Tools.callTool()', () => {
     )
     const result = await tools.callTool('fetch_html', { url: 'https://example.com' })
     expect(result.text).toBe('proxy-fallback')
+  })
+})
+
+// ─── LLM4AgentsClient.close() ─────────────────────────────────────────────────
+
+describe('LLM4AgentsClient.close()', () => {
+  it('disconnects all MCP servers via tools.disconnectAll()', async () => {
+    const client = new LLM4AgentsClient({ apiKey: 'test-key' })
+    const h1 = await client.tools.connect({ name: 'server-a', command: 'npx' })
+    const h2 = await client.tools.connect({ name: 'server-b', url: 'https://mcp.example.com', transport: 'http' as const })
+    expect(client.tools.connectedServers()).toHaveLength(2)
+    await client.close()
+    expect(h1.disconnect).toHaveBeenCalledOnce()
+    expect(h2.disconnect).toHaveBeenCalledOnce()
+    expect(client.tools.connectedServers()).toHaveLength(0)
+  })
+
+  it('is a no-op when no MCP servers are connected', async () => {
+    const client = new LLM4AgentsClient({ apiKey: 'test-key' })
+    await expect(client.close()).resolves.toBeUndefined()
   })
 })

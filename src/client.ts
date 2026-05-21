@@ -74,4 +74,19 @@ export class LLM4AgentsClient {
     };
     this.x402 = new X402Namespace(payment, baseUrl);
   }
+
+  /**
+   * Release all resources held by this client.
+   *
+   * Disconnects all MCP servers registered via `client.tools.connect()`. Stdio
+   * servers spawn child processes — calling `close()` terminates them cleanly and
+   * prevents subprocess leaks. HTTP server handles release their fetch state.
+   *
+   * After `close()` returns, any subsequent call that requires an active MCP
+   * server connection will reject. Callers can reconnect individual servers with
+   * `client.tools.connect(cfg)`.
+   */
+  async close(): Promise<void> {
+    await this.tools.disconnectAll();
+  }
 }

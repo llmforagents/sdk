@@ -62,6 +62,16 @@ export class Tools {
   /**
    * Disconnect a registered MCP server by name and remove it from the registry.
    * Throws if no server with that name is registered.
+   *
+   * The SDK does NOT auto-reconnect when a stdio server's child process dies —
+   * the transport's `onclose` fires and the handle becomes unusable. Subsequent
+   * `callTool` calls will reject. Callers detecting this must call
+   * `client.tools.connect(cfg)` again with the original config to rebuild.
+   *
+   * Rationale: auto-reconnect with state replay (e.g. restoring tool registrations
+   * or session state) is non-trivial and the official SDK doesn't provide
+   * primitives for it. Leaving recovery to the caller keeps the abstraction
+   * predictable.
    */
   async disconnect(name: string): Promise<void> {
     const handle = this.servers.get(name);
