@@ -84,11 +84,30 @@ export class Tools {
 
   /**
    * Disconnect all registered MCP servers and clear the registry.
+   *
+   * Best-effort: every handle's `disconnect()` is dispatched even if some
+   * fail. Errors are collected and re-raised as an `AggregateError` AFTER
+   * all disconnects have settled, so a single broken handle can't leak the
+   * rest of the registry — each underlying child process / HTTP transport
+   * still gets the close signal. The registry is cleared in all cases.
    */
   async disconnectAll(): Promise<void> {
-    const disconnects = [...this.servers.values()].map((h) => h.disconnect());
-    await Promise.all(disconnects);
+    const settled = await Promise.allSettled(
+      [...this.servers.values()].map((h) => h.disconnect()),
+    );
     this.servers.clear();
+    const errors = settled
+      .filter((r): r is PromiseRejectedResult => r.status === 'rejected')
+      .map((r) => (r.reason instanceof Error ? r.reason : new Error(String(r.reason))));
+    if (errors.length > 0) {
+      // Compose a single Error whose message includes all failure reasons; the
+      // underlying errors are attached as a `causes` property for inspection.
+      // (We avoid `AggregateError` directly because it requires ES2021 lib.)
+      const msg = `disconnectAll: ${errors.length} handle(s) failed to disconnect: ${errors.map((e) => e.message).join('; ')}`;
+      const aggregate = new Error(msg);
+      (aggregate as Error & { causes: readonly Error[] }).causes = errors;
+      throw aggregate;
+    }
   }
 
   /**
