@@ -580,7 +580,7 @@ auth and with x402 walk-up.
 | `workspace_upload({ filename, content_base64, days_to_store, content_type? })` | Inline upload, ≤10 MB. Billed per-MB + storage days. |
 | `workspace_upload_init({ filename, size_bytes, days_to_store, content_type? })` | Start a large upload. Returns `{ upload_id, put_url, expires_at, max_bytes }`. Reserves cost. |
 | `workspace_upload_finalize({ upload_id })` | Confirm the PUT and settle billing. Must be called within 15 min of init. |
-| `workspace_download({ filename, format?: 'inline'\|'url', url_ttl_minutes? })` | Inline returns base64 (≤10 MB). URL returns a short-lived (1-15 min) signed GET. |
+| `workspace_download({ filename, format?: 'inline'\|'url', url_ttl_minutes? })` | Inline returns base64 (≤10 MB). URL returns a **single-use** proxied download URL valid 1-15 min — billed at issuance, streams through our worker (we never expose direct R2 URLs to keep per-download billing accurate). |
 | `workspace_extend({ filename, additional_days })` | Extend storage on an existing file. |
 | `workspace_copy({ source_filename, dest_filename, days_to_store })` | Server-side copy. Billed for destination storage only. |
 
@@ -595,6 +595,8 @@ auth and with x402 walk-up.
 | List / stat / delete / create | Free, 60 req/min | — |
 
 x402 walk-up rates are ~10% lower per-MB.
+
+**Note:** Downloads never expose direct R2 URLs — both `inline` and `url` modes route bytes through our worker so per-download billing is enforced.
 
 ### Quick example (TypeScript SDK)
 
@@ -614,14 +616,15 @@ await client.tools.workspace_upload({
 // List files
 const { files } = await client.tools.workspace_list({ prefix: 'scrapes/' });
 
-// Stream large download via signed URL
+// Get a one-time proxied URL — useful when forwarding bytes to a third party
+// (email attachment, frontend hand-off, etc.). The URL is single-use: the
+// second hit returns 410. The agent is billed at issuance.
 const { download_url } = await client.tools.workspace_download({
   filename: 'scrapes/page-1.md',
   format: 'url',
   url_ttl_minutes: 5,
 });
-const res = await fetch(download_url);
-const body = await res.text();
+// Hand `download_url` to whoever needs the bytes — they GET it once.
 ```
 
 ## Models
