@@ -573,16 +573,16 @@ auth and with x402 walk-up.
 
 | Tool | Purpose |
 |---|---|
-| `workspace_create` | Idempotent — confirm the workspace exists. |
-| `workspace_list({ prefix?, limit? })` | List files. Free, rate-limited (60/min). |
-| `workspace_stat({ filename })` | Get one file's metadata. Free, rate-limited. |
-| `workspace_delete({ filename })` | Delete a file (no storage refund). Free, rate-limited. |
-| `workspace_upload({ filename, content_base64, days_to_store, content_type? })` | Inline upload, ≤10 MB. Billed per-MB + storage days. |
-| `workspace_upload_init({ filename, size_bytes, days_to_store, content_type? })` | Start a large upload. Returns `{ upload_id, put_url, expires_at, max_bytes }`. Reserves cost. |
-| `workspace_upload_finalize({ upload_id })` | Confirm the PUT and settle billing. Must be called within 15 min of init. |
-| `workspace_download({ filename, format?: 'inline'\|'url', url_ttl_minutes? })` | Inline returns base64 (≤10 MB). URL returns a **single-use** proxied download URL valid 1-15 min — billed at issuance, streams through our worker (we never expose direct R2 URLs to keep per-download billing accurate). |
-| `workspace_extend({ filename, additional_days })` | Extend storage on an existing file. |
-| `workspace_copy({ source_filename, dest_filename, days_to_store })` | Server-side copy. Billed for destination storage only. |
+| `workspace.create()` | Idempotent — confirm the workspace exists. |
+| `workspace.list({ prefix?, limit? })` | List files. Free, rate-limited (60/min). |
+| `workspace.stat({ filename })` | Get one file's metadata. Free, rate-limited. |
+| `workspace.delete({ filename })` | Delete a file (no storage refund). Free, rate-limited. |
+| `workspace.upload({ filename, content_base64, days_to_store, content_type? })` | Inline upload, ≤10 MB. Billed per-MB + storage days. |
+| `workspace.uploadInit({ filename, size_bytes, days_to_store, content_type? })` | Start a large upload. Returns `{ upload_id, put_url, expires_at, max_bytes }`. Reserves cost. |
+| `workspace.uploadFinalize({ upload_id })` | Confirm the PUT and settle billing. Must be called within 15 min of init. |
+| `workspace.download({ filename, format?: 'inline'\|'url', url_ttl_minutes? })` | Inline returns base64 (≤10 MB). URL returns a **single-use** proxied download URL valid 1-15 min — billed at issuance, streams through our worker (we never expose direct R2 URLs to keep per-download billing accurate). |
+| `workspace.extend({ filename, additional_days })` | Extend storage on an existing file. |
+| `workspace.copy({ source_filename, dest_filename, days_to_store })` | Server-side copy. Billed for destination storage only. |
 
 ### Pricing
 
@@ -601,29 +601,31 @@ x402 walk-up rates are ~10% lower per-MB.
 ### Quick example (TypeScript SDK)
 
 ```ts
-import { LLM4Agents } from '@llmforagents/sdk';
+import { LLM4AgentsClient } from '@llmforagents/sdk';
 
-const client = LLM4Agents.fromBearer(process.env.LLM4AGENTS_API_KEY!);
+const client = new LLM4AgentsClient({ apiKey: process.env.LLM4AGENTS_API_KEY! });
 
 // Upload a small file
-await client.tools.workspace_upload({
+await client.tools.workspace.upload({
   filename: 'scrapes/page-1.md',
   content_base64: Buffer.from('# Hello\n').toString('base64'),
   days_to_store: 7,
   content_type: 'text/markdown',
 });
 
-// List files
-const { files } = await client.tools.workspace_list({ prefix: 'scrapes/' });
+// List files — result.text is the JSON-stringified response from the MCP tool
+const listResult = await client.tools.workspace.list({ prefix: 'scrapes/' });
+const { files } = JSON.parse(listResult.text);
 
 // Get a one-time proxied URL — useful when forwarding bytes to a third party
 // (email attachment, frontend hand-off, etc.). The URL is single-use: the
 // second hit returns 410. The agent is billed at issuance.
-const { download_url } = await client.tools.workspace_download({
+const dlResult = await client.tools.workspace.download({
   filename: 'scrapes/page-1.md',
   format: 'url',
   url_ttl_minutes: 5,
 });
+const { download_url } = JSON.parse(dlResult.text);
 // Hand `download_url` to whoever needs the bytes — they GET it once.
 ```
 
