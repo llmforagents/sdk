@@ -5,11 +5,13 @@ import type { McpServerHandle } from '../transport/mcp-stdio.js';
 import { Scraper } from './scraper.js';
 import { Search } from './search.js';
 import { Image } from './image.js';
+import { Workspace } from './workspace.js';
 
 export class Tools {
   readonly scraper: Scraper;
   readonly search: Search;
   readonly image: Image;
+  readonly workspace: Workspace;
 
   private cachedDefinitions: readonly ToolDefinition[] | undefined;
   private readonly servers = new Map<string, McpServerHandle>();
@@ -18,6 +20,7 @@ export class Tools {
     this.scraper = new Scraper(mcp);
     this.search = new Search(mcp);
     this.image = new Image(mcp);
+    this.workspace = new Workspace(mcp);
   }
 
   get definitions(): readonly ToolDefinition[] | undefined {

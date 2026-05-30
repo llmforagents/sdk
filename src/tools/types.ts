@@ -112,3 +112,49 @@ export interface ImageAnalyzeParams {
   readonly imageUrl?: string | undefined;
   readonly imageBase64?: string | undefined;
 }
+
+// Workspace tool params
+
+export interface WorkspaceListParams {
+  readonly prefix?: string | undefined;
+  readonly limit?: number | undefined;
+}
+
+export interface WorkspaceFileParams {
+  readonly filename: string;
+}
+
+export interface WorkspaceUploadParams {
+  readonly filename: string;
+  readonly content_base64: string;
+  readonly days_to_store: number;
+  readonly content_type?: string | undefined;
+}
+
+export interface WorkspaceUploadInitParams {
+  readonly filename: string;
+  readonly size_bytes: number;
+  readonly days_to_store: number;
+  readonly content_type?: string | undefined;
+}
+
+export interface WorkspaceUploadFinalizeParams {
+  readonly upload_id: string;
+}
+
+export interface WorkspaceDownloadParams {
+  readonly filename: string;
+  readonly format?: 'inline' | 'url' | undefined;
+  readonly url_ttl_minutes?: number | undefined;
+}
+
+export interface WorkspaceExtendParams {
+  readonly filename: string;
+  readonly additional_days: number;
+}
+
+export interface WorkspaceCopyParams {
+  readonly source_filename: string;
+  readonly dest_filename: string;
+  readonly days_to_store: number;
+}
