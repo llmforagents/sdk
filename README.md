@@ -562,6 +562,68 @@ const defs = await client.tools.getDefinitions()   // ToolDefinition[] in OpenAI
 
 Pass these definitions to any LLM that supports function calling, or let the `conversation()` helper manage them automatically when `tools: client.tools` is set.
 
+## Workspace tools
+
+Every authenticated agent gets a private workspace backed by Cloudflare R2.
+Files are billed per-MB on upload (covering 1 day of storage) and per-day
+afterwards; downloads are billed per-MB. The same tools work with Bearer
+auth and with x402 walk-up.
+
+### Tools
+
+| Tool | Purpose |
+|---|---|
+| `workspace_create` | Idempotent — confirm the workspace exists. |
+| `workspace_list({ prefix?, limit? })` | List files. Free, rate-limited (60/min). |
+| `workspace_stat({ filename })` | Get one file's metadata. Free, rate-limited. |
+| `workspace_delete({ filename })` | Delete a file (no storage refund). Free, rate-limited. |
+| `workspace_upload({ filename, content_base64, days_to_store, content_type? })` | Inline upload, ≤10 MB. Billed per-MB + storage days. |
+| `workspace_upload_init({ filename, size_bytes, days_to_store, content_type? })` | Start a large upload. Returns `{ upload_id, put_url, expires_at, max_bytes }`. Reserves cost. |
+| `workspace_upload_finalize({ upload_id })` | Confirm the PUT and settle billing. Must be called within 15 min of init. |
+| `workspace_download({ filename, format?: 'inline'\|'url', url_ttl_minutes? })` | Inline returns base64 (≤10 MB). URL returns a short-lived (1-15 min) signed GET. |
+| `workspace_extend({ filename, additional_days })` | Extend storage on an existing file. |
+| `workspace_copy({ source_filename, dest_filename, days_to_store })` | Server-side copy. Billed for destination storage only. |
+
+### Pricing
+
+| Operation | Price | $/GB equivalent |
+|---|---|---|
+| Upload base | 0.01¢/MB (min 1¢) | $0.10/GB |
+| Storage | 0.0001¢/MB/day | ~$0.03/GB-month |
+| Download | 0.004¢/MB (min 1¢) | $0.04/GB |
+| Storage extension | 0.0001¢/MB/day | ~$0.03/GB-month |
+| List / stat / delete / create | Free, 60 req/min | — |
+
+x402 walk-up rates are ~10% lower per-MB.
+
+### Quick example (TypeScript SDK)
+
+```ts
+import { LLM4Agents } from '@llmforagents/sdk';
+
+const client = LLM4Agents.fromBearer(process.env.LLM4AGENTS_API_KEY!);
+
+// Upload a small file
+await client.tools.workspace_upload({
+  filename: 'scrapes/page-1.md',
+  content_base64: Buffer.from('# Hello\n').toString('base64'),
+  days_to_store: 7,
+  content_type: 'text/markdown',
+});
+
+// List files
+const { files } = await client.tools.workspace_list({ prefix: 'scrapes/' });
+
+// Stream large download via signed URL
+const { download_url } = await client.tools.workspace_download({
+  filename: 'scrapes/page-1.md',
+  format: 'url',
+  url_ttl_minutes: 5,
+});
+const res = await fetch(download_url);
+const body = await res.text();
+```
+
 ## Models
 
 ```typescript
@@ -649,6 +711,9 @@ const client = new LLM4AgentsClient({
 
 ## What's New in v2.5
 
+- **Workspace tools (NEW)** — Private R2-backed file storage per agent. 10 new MCP tools for upload (inline
+  and pre-signed), download (inline or signed URL), list, stat, extend, copy, and
+  delete. Works with Bearer and x402. See [Workspace tools](#workspace-tools).
 - **x402 walk-up payment mode** — pay per-request from a wallet on `/v1/chat/completions` without
   registering an agent. Pass `payment: { mode: 'x402', signer, network }` to the client constructor.
   Supports both `viem.Account` (via `viemAccountToSigner`) and any custom `Signer` implementation
