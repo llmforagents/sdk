@@ -1,6 +1,6 @@
 {
   "name": "@llmforagents/sdk",
-  "version": "2.6.0",
+  "version": "2.6.1",
   "description": "Unified TypeScript SDK for LLM4Agents — chat, wallets, gasless transfers, and MCP tools",
   "type": "module",
   "main": "./dist/index.cjs",

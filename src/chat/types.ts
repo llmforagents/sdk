@@ -65,6 +65,15 @@ export interface ChatUsage {
   readonly completion_tokens: number;
   readonly total_tokens?: number | undefined;
   readonly reasoning_tokens?: number | undefined;
+  /**
+   * Cost of the round in USD, as a float. Present on the terminating SSE
+   * chunk of streaming responses (the proxy embeds it in `usage.cost`); the
+   * non-streaming path receives the same value via the `x-cost-usd-cents`
+   * response header instead. Streaming consumers should rely on
+   * `ResponseMeta.costUsdCents` (which the SDK populates from this field
+   * for streaming responses) rather than reading this directly.
+   */
+  readonly cost?: number | undefined;
 }
 
 export interface ChatResponse {

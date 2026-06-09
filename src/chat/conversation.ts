@@ -279,7 +279,12 @@ export class Conversation {
 
       let streamedContent = '';
       const pendingToolCalls: Map<number, { id: string; name: string; args: string }> = new Map();
-      let chunkUsage: { prompt_tokens: number; completion_tokens: number; reasoning_tokens?: number | undefined } | undefined;
+      // `cost` is populated on the terminating chunk's usage by the proxy in
+      // streaming mode, where it cannot ride on the response headers (which
+      // are flushed before the round's cost is known). We promote it into
+      // `roundMeta.costUsdCents` below so consumers see the same field
+      // regardless of whether streaming or non-streaming was used.
+      let chunkUsage: { prompt_tokens: number; completion_tokens: number; reasoning_tokens?: number | undefined; cost?: number | undefined } | undefined;
 
       for await (const chunk of chunks) {
         const firstChoice = chunk.choices[0];
@@ -325,6 +330,14 @@ export class Conversation {
       }
 
       if (roundMeta !== undefined) {
+        // Streaming responses don't carry x-cost-usd-cents in the response
+        // headers — by the time the headers flush, the proxy hasn't finished
+        // tallying the round. The terminating SSE chunk's usage.cost field
+        // (USD) carries the final number instead; promote it into
+        // costUsdCents so downstream consumers see one consistent field.
+        if (roundMeta.costUsdCents === undefined && chunkUsage?.cost !== undefined) {
+          roundMeta = { ...roundMeta, costUsdCents: chunkUsage.cost * 100 };
+        }
         yield { type: 'meta', meta: roundMeta };
         if (this.onRoundMeta) {
           this.onRoundMeta(roundMeta);

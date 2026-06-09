@@ -981,3 +981,112 @@ describe('Conversation.stream() — tool_choice (first-round-only)', () => {
     expect(round2.tool_choice).toBeUndefined();
   });
 });
+
+// Streaming responses from the proxy don't carry x-cost-usd-cents in the
+// response headers — by the time the headers flush, the proxy hasn't
+// finished tallying the round. The cost arrives in the terminating SSE
+// chunk's `usage.cost` field (USD float) instead. Without this fix the
+// runtime sees costUsdCents=undefined → 0 micros → the dashboard
+// records every streaming round as $0.
+//
+// Bug observed live in the supervisor.delegate e2e: every meta event
+// reaching operator-dashboard had `cost_usd_micros: 0` despite Peter's
+// wallet being debited the real cost on each round.
+describe('Conversation.stream() — meta cost from usage.cost (streaming-mode)', () => {
+  function streamRespWithoutCostHeader(opts: { cost: number; promptTokens?: number; completionTokens?: number }): Response {
+    const lines = [
+      `data: ${JSON.stringify({ id: 'c1', choices: [{ delta: { role: 'assistant', content: 'ok' }, index: 0, finish_reason: null }], model: 'test-model' })}`,
+      `data: ${JSON.stringify({
+        id: 'c1',
+        choices: [{ delta: {}, index: 0, finish_reason: 'stop' }],
+        usage: {
+          prompt_tokens: opts.promptTokens ?? 10,
+          completion_tokens: opts.completionTokens ?? 5,
+          cost: opts.cost,
+        },
+        model: 'test-model',
+      })}`,
+      'data: [DONE]',
+    ].join('\n');
+    return new Response(lines, {
+      status: 200,
+      headers: {
+        'content-type': 'text/event-stream',
+        'x-request-id': 'req_no_cost_header',
+        // intentionally NO x-cost-usd-cents — this matches what api.llm4agents.com
+        // actually sends for streaming completions.
+        'x-model-used': 'test-model',
+      },
+    });
+  }
+
+  it('promotes terminating chunk usage.cost (USD) into roundMeta.costUsdCents', async () => {
+    // $0.000035 USD = 0.0035 cents = 35 micros. The proxy uses fractional
+    // cents on the wire so the runtime must not floor-truncate.
+    fetchSpy.mockResolvedValueOnce(streamRespWithoutCostHeader({ cost: 0.000035 }));
+
+    const metaEvents: ResponseMeta[] = [];
+    const conv = new Conversation(http, {
+      model: 'test-model',
+      onRoundMeta: (meta) => { metaEvents.push(meta); },
+    });
+    const streamEvents: StreamEvent[] = [];
+    for await (const event of conv.stream('hi')) {
+      streamEvents.push(event);
+    }
+
+    const meta = streamEvents.find((e): e is Extract<StreamEvent, { type: 'meta' }> => e.type === 'meta');
+    expect(meta).toBeDefined();
+    // 0.000035 USD * 100 = 0.0035 cents — fractional, must be preserved.
+    expect(meta?.meta.costUsdCents).toBeCloseTo(0.0035, 6);
+    // onRoundMeta callback receives the same value.
+    expect(metaEvents[0]?.costUsdCents).toBeCloseTo(0.0035, 6);
+  });
+
+  it('honors x-cost-usd-cents header over usage.cost when both are present (header wins)', async () => {
+    // Hybrid scenario for robustness: header AND chunk both carry cost.
+    // Header was set by buildMeta before the stream started, so it takes
+    // precedence (the promotion only fires when costUsdCents is undefined).
+    const lines = [
+      `data: ${JSON.stringify({ id: 'c1', choices: [{ delta: { content: 'ok' }, index: 0 }], model: 'test-model' })}`,
+      `data: ${JSON.stringify({ id: 'c1', choices: [{ delta: {}, index: 0, finish_reason: 'stop' }], usage: { prompt_tokens: 10, completion_tokens: 5, cost: 0.5 /* 50 cents */ }, model: 'test-model' })}`,
+      'data: [DONE]',
+    ].join('\n');
+    fetchSpy.mockResolvedValueOnce(new Response(lines, {
+      status: 200,
+      headers: {
+        'content-type': 'text/event-stream',
+        'x-request-id': 'r',
+        'x-cost-usd-cents': '7',     // 7 cents from header — should win
+        'x-model-used': 'test-model',
+      },
+    }));
+
+    const conv = new Conversation(http, { model: 'test-model' });
+    const events: StreamEvent[] = [];
+    for await (const ev of conv.stream('hi')) events.push(ev);
+    const meta = events.find((e): e is Extract<StreamEvent, { type: 'meta' }> => e.type === 'meta');
+    expect(meta?.meta.costUsdCents).toBe(7);
+  });
+
+  it('leaves costUsdCents undefined when the chunk has no usage.cost AND no header', async () => {
+    // Defensive: if the provider didn't emit cost AT ALL (e.g., some local
+    // model proxies), the field stays undefined rather than getting filled
+    // with garbage. Consumers can fall back to token-based math.
+    const lines = [
+      `data: ${JSON.stringify({ id: 'c1', choices: [{ delta: { content: 'ok' }, index: 0 }], model: 'test-model' })}`,
+      `data: ${JSON.stringify({ id: 'c1', choices: [{ delta: {}, index: 0, finish_reason: 'stop' }], usage: { prompt_tokens: 10, completion_tokens: 5 }, model: 'test-model' })}`,
+      'data: [DONE]',
+    ].join('\n');
+    fetchSpy.mockResolvedValueOnce(new Response(lines, {
+      status: 200,
+      headers: { 'content-type': 'text/event-stream', 'x-request-id': 'r', 'x-model-used': 'test-model' },
+    }));
+
+    const conv = new Conversation(http, { model: 'test-model' });
+    const events: StreamEvent[] = [];
+    for await (const ev of conv.stream('hi')) events.push(ev);
+    const meta = events.find((e): e is Extract<StreamEvent, { type: 'meta' }> => e.type === 'meta');
+    expect(meta?.meta.costUsdCents).toBeUndefined();
+  });
+});
