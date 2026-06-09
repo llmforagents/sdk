@@ -11,8 +11,9 @@ import type {
   ConversationResponse,
   CustomTools,
   ResponseMeta,
-  ToolCallRecord,
   ToolCall,
+  ToolCallRecord,
+  ToolChoice,
   StreamEvent,
 } from './types.js';
 
@@ -49,6 +50,9 @@ export class Conversation {
   private readonly onToolsIgnored: ConversationOptions['onToolsIgnored'];
   private readonly enablePromptToolFallback: boolean;
   private readonly maxToolRounds: number;
+  // First-round-only tool selection. See `ConversationOptions.tool_choice`
+  // for the rationale on why we don't propagate this to subsequent rounds.
+  private readonly toolChoice: ToolChoice | undefined;
   private history: ChatMessage[];
 
   constructor(
@@ -66,6 +70,7 @@ export class Conversation {
     this.onToolsIgnored = opts.onToolsIgnored;
     this.enablePromptToolFallback = opts.enablePromptToolFallback ?? false;
     this.maxToolRounds = opts.maxToolRounds ?? DEFAULT_MAX_TOOL_ROUNDS;
+    this.toolChoice = opts.tool_choice;
     this.history = opts.history ? [...opts.history] : [];
   }
 
@@ -89,10 +94,15 @@ export class Conversation {
       const toolDefs = allDefs.length > 0 ? allDefs : undefined;
       const messages = this.buildMessages();
 
+      // First-round-only tool_choice — see ConversationOptions.tool_choice
+      // for the auto-revert rationale.
+      const effectiveToolChoice =
+        roundCount === 0 ? this.toolChoice : undefined;
       const { data: response, headers } = await this.http.postWithMeta<ChatResponse>('/v1/chat/completions', {
         model: this.model,
         messages,
         ...(toolDefs && toolDefs.length > 0 ? { tools: toolDefs } : {}),
+        ...(effectiveToolChoice !== undefined ? { tool_choice: effectiveToolChoice } : {}),
       }, this.signal);
 
       if (this.onRoundMeta) {
@@ -251,11 +261,16 @@ export class Conversation {
       let receivedReceipt:
         | { transaction: string; network: string; amount: string; payer: string }
         | undefined;
+      // First-round-only tool_choice — see ConversationOptions.tool_choice
+      // for the auto-revert rationale.
+      const effectiveToolChoice =
+        roundCount === 0 ? this.toolChoice : undefined;
       const chunks = await completions.create({
         model: this.model,
         messages,
         stream: true,
         ...(toolDefs && toolDefs.length > 0 ? { tools: toolDefs } : {}),
+        ...(effectiveToolChoice !== undefined ? { tool_choice: effectiveToolChoice } : {}),
       }, {
         signal: this.signal,
         onMeta: (meta) => { roundMeta = meta; },
@@ -567,6 +582,7 @@ export class Conversation {
       onRoundMeta: this.onRoundMeta,
       onToolsIgnored: this.onToolsIgnored,
       enablePromptToolFallback: this.enablePromptToolFallback,
+      ...(this.toolChoice !== undefined ? { tool_choice: this.toolChoice } : {}),
       history: [...this.history],
     });
   }

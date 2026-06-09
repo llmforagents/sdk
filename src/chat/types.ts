@@ -182,4 +182,18 @@ export interface ConversationOptions {
   readonly onRoundMeta?: ((meta: ResponseMeta) => void) | undefined;
   readonly onToolsIgnored?: ((model: string) => void) | undefined;
   readonly enablePromptToolFallback?: boolean | undefined;
+  /**
+   * Controls tool selection on the FIRST round of the conversation. After the
+   * first round the SDK reverts to `'auto'` regardless of this value, so the
+   * model can still wrap up with plain text once its forced tool has returned.
+   * Without this auto-revert, `'required'` on every round forces the model to
+   * keep tool-calling forever and the conversation hits `maxToolRounds`.
+   *
+   * Typical agent-routing pattern: pass `'required'` so the model can't sneak
+   * a JSON-as-text fallback past you on round 1, then let it summarize the
+   * tool result naturally on round 2. Anthropic and OpenAI both accept the
+   * same `'auto' | 'required' | 'none'` enum here; passing `{type: 'function',
+   * function: {name: 'foo'}}` forces a specific named tool on round 1.
+   */
+  readonly tool_choice?: ToolChoice | undefined;
 }

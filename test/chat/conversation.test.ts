@@ -842,3 +842,142 @@ describe('Conversation — enablePromptToolFallback', () => {
     }
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────
+// tool_choice: passes through on round 1, auto-reverts after.
+//
+// Background — yesterday's live test of the supervisor.delegate runtime:
+// with Anthropic's default `auto`, Sonnet 4.5 *described* the tool call as
+// JSON-in-text instead of using the tool_calls API. Forcing `required` via
+// curl made it call the tool natively on the first turn — but Anthropic's
+// API rejects a request when `tool_choice='required'` is set AND the prior
+// turn was a tool result with no remaining tool to call. The SDK must
+// therefore only apply the user's tool_choice on round 1 and revert to
+// `auto` afterwards, so the model can summarize the tool result naturally.
+describe('Conversation — tool_choice (first-round-only semantics)', () => {
+  it('forwards `tool_choice` verbatim on round 1 of .say()', async () => {
+    fetchSpy.mockResolvedValueOnce(chatResponse('ok'));
+    const conv = new Conversation(http, { model: 'test-model', tool_choice: 'required' });
+    await conv.say('hi');
+    const [, opts] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(opts.body as string) as { tool_choice?: unknown };
+    expect(body.tool_choice).toBe('required');
+  });
+
+  it('drops `tool_choice` on round 2 even if the caller set it', async () => {
+    // Round 1: LLM tool_call → execute tool. Round 2: LLM summarizes.
+    fetchSpy.mockResolvedValueOnce(mcpToolsList());
+    fetchSpy.mockResolvedValueOnce(chatResponse('', [
+      { id: 'tc_1', type: 'function', function: { name: 'google_search', arguments: '{"q":"x"}' } },
+    ]));
+    fetchSpy.mockResolvedValueOnce(mcpResponse('search result'));
+    fetchSpy.mockResolvedValueOnce(chatResponse('final answer'));
+
+    const conv = new Conversation(http, { model: 'test-model', tools, tool_choice: 'required' });
+    await conv.say('do it');
+
+    // The first LLM call is fetchSpy.mock.calls[1] (mcpToolsList is [0]).
+    const llmCalls = fetchSpy.mock.calls.filter(([url]) =>
+      typeof url === 'string' && !url.includes('mcp'),
+    );
+    expect(llmCalls.length).toBe(2);
+    const round1Body = JSON.parse((llmCalls[0]?.[1] as RequestInit).body as string) as { tool_choice?: unknown };
+    const round2Body = JSON.parse((llmCalls[1]?.[1] as RequestInit).body as string) as { tool_choice?: unknown };
+    expect(round1Body.tool_choice).toBe('required');
+    // Without the auto-revert, Anthropic 400s here ("required" with no remaining tool work).
+    expect(round2Body.tool_choice).toBeUndefined();
+  });
+
+  it('omits `tool_choice` entirely from the request when the caller did NOT set it', async () => {
+    fetchSpy.mockResolvedValueOnce(chatResponse('ok'));
+    const conv = new Conversation(http, { model: 'test-model' });
+    await conv.say('hi');
+    const [, opts] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(opts.body as string) as { tool_choice?: unknown };
+    expect(body.tool_choice).toBeUndefined();
+  });
+
+  it('accepts the specific-function shape {type:"function", function:{name}}', async () => {
+    fetchSpy.mockResolvedValueOnce(chatResponse('ok'));
+    const conv = new Conversation(http, {
+      model: 'test-model',
+      tool_choice: { type: 'function', function: { name: 'supervisor__delegate' } },
+    });
+    await conv.say('hi');
+    const [, opts] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(opts.body as string) as { tool_choice?: { type: string; function: { name: string } } };
+    expect(body.tool_choice).toEqual({ type: 'function', function: { name: 'supervisor__delegate' } });
+  });
+
+  it('fork() propagates tool_choice to the new conversation', async () => {
+    fetchSpy.mockResolvedValueOnce(chatResponse('a'));
+    fetchSpy.mockResolvedValueOnce(chatResponse('b'));
+    const parent = new Conversation(http, { model: 'test-model', tool_choice: 'required' });
+    await parent.say('first');                              // round 1 of parent
+    const child = parent.fork();
+    await child.say('second');                              // round 1 of child — required still applies
+    const childBody = JSON.parse((fetchSpy.mock.calls[1]?.[1] as RequestInit).body as string) as { tool_choice?: unknown };
+    expect(childBody.tool_choice).toBe('required');
+  });
+});
+
+describe('Conversation.stream() — tool_choice (first-round-only)', () => {
+  function sseStream(chunks: string[]): Response {
+    const joined = chunks.join('');
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(joined));
+        controller.close();
+      },
+    });
+    return new Response(stream, {
+      status: 200,
+      headers: { 'content-type': 'text/event-stream', 'x-request-id': 'req_sstc' },
+    });
+  }
+
+  it('forwards `tool_choice` verbatim on round 1 of .stream()', async () => {
+    fetchSpy.mockResolvedValueOnce(sseStream([
+      'data: {"id":"c1","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}\n\n',
+      'data: {"id":"c1","choices":[{"index":0,"delta":{"content":"ok"},"finish_reason":null}]}\n\n',
+      'data: {"id":"c1","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":5,"completion_tokens":1}}\n\n',
+      'data: [DONE]\n\n',
+    ]));
+    const conv = new Conversation(http, { model: 'test-model', tool_choice: 'required' });
+    for await (const _ of await conv.stream('hi')) { /* drain */ }
+    const [, opts] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(opts.body as string) as { tool_choice?: unknown };
+    expect(body.tool_choice).toBe('required');
+  });
+
+  it('drops `tool_choice` on round 2 when round 1 fired a tool', async () => {
+    // tools/list for definitions
+    fetchSpy.mockResolvedValueOnce(mcpToolsList());
+    // round 1: stream emits a tool_call + finish
+    fetchSpy.mockResolvedValueOnce(sseStream([
+      'data: {"id":"c1","choices":[{"index":0,"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"tc_1","type":"function","function":{"name":"google_search","arguments":"{\\"q\\":\\"x\\"}"}}]},"finish_reason":null}]}\n\n',
+      'data: {"id":"c1","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":5,"completion_tokens":3}}\n\n',
+      'data: [DONE]\n\n',
+    ]));
+    // MCP tool execution
+    fetchSpy.mockResolvedValueOnce(mcpResponse('search result'));
+    // round 2: plain text wrap-up
+    fetchSpy.mockResolvedValueOnce(sseStream([
+      'data: {"id":"c2","choices":[{"index":0,"delta":{"content":"done"},"finish_reason":null}]}\n\n',
+      'data: {"id":"c2","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":5,"completion_tokens":1}}\n\n',
+      'data: [DONE]\n\n',
+    ]));
+
+    const conv = new Conversation(http, { model: 'test-model', tools, tool_choice: 'required' });
+    for await (const _ of await conv.stream('go')) { /* drain */ }
+
+    const llmCalls = fetchSpy.mock.calls.filter(([url]) =>
+      typeof url === 'string' && !url.includes('mcp'),
+    );
+    expect(llmCalls.length).toBe(2);
+    const round1 = JSON.parse((llmCalls[0]?.[1] as RequestInit).body as string) as { tool_choice?: unknown };
+    const round2 = JSON.parse((llmCalls[1]?.[1] as RequestInit).body as string) as { tool_choice?: unknown };
+    expect(round1.tool_choice).toBe('required');
+    expect(round2.tool_choice).toBeUndefined();
+  });
+});
