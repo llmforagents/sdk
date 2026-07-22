@@ -52,6 +52,23 @@ describe('Tools.call()', () => {
   });
 });
 
+describe('Tools.textToSpeech()', () => {
+  it('delegates to mcp.callTool with the text_to_speech tool name', async () => {
+    fetchSpy.mockResolvedValueOnce(new Response(JSON.stringify({
+      result: { content: [{ type: 'text', text: 'audio://workspace/speech.mp3' }] },
+    }), { status: 200, headers: { 'content-type': 'application/json' } }));
+
+    const result = await tools.textToSpeech({ text: 'Hola mundo', voice: 'sal', format: 'mp3' });
+
+    expect(result.text).toBe('audio://workspace/speech.mp3');
+    expect(fetchSpy).toHaveBeenCalledOnce();
+    const [, opts] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(opts.body as string) as { params: { name: string; arguments: unknown } };
+    expect(body.params.name).toBe('text_to_speech');
+    expect(body.params.arguments).toEqual({ text: 'Hola mundo', voice: 'sal', format: 'mp3' });
+  });
+});
+
 describe('Tools sub-modules', () => {
   it('exposes scraper, search, image sub-modules', () => {
     expect(tools.scraper).toBeDefined();

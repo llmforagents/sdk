@@ -238,6 +238,28 @@ export class HttpTransport {
     }
   }
 
+  /** POST that returns raw bytes (e.g. /v1/audio/speech). */
+  async postBinary(path: string, body: unknown, signal?: AbortSignal): Promise<{ data: Uint8Array; headers: Headers }> {
+    const authHeaders = await this.resolveAuthHeaders(path, 'POST', body);
+    let res: Response;
+    try {
+      res = await fetch(`${this.baseUrl}${path}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', ...authHeaders },
+        body: JSON.stringify(body),
+        signal: this.buildSignal(signal),
+      });
+    } catch (err) {
+      throw this.mapFetchError(err);
+    }
+    if (!res.ok) {
+      const text = await res.text();
+      if (res.status === 402) this.throwFor402(res, text);
+      throw mapHttpError(res.status, text, res.headers.get('x-request-id') ?? undefined);
+    }
+    return { data: new Uint8Array(await res.arrayBuffer()), headers: res.headers };
+  }
+
   async get<T>(path: string, params?: Readonly<Record<string, string>>): Promise<T> {
     let url = `${this.baseUrl}${path}`;
     if (params) {

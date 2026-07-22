@@ -113,6 +113,14 @@ export interface ImageAnalyzeParams {
   readonly imageBase64?: string | undefined;
 }
 
+export interface TextToSpeechParams {
+  readonly text: string;
+  readonly voice?: string;
+  readonly model?: string;
+  readonly format?: 'mp3' | 'wav';
+  readonly [key: string]: unknown;
+}
+
 // Workspace tool params
 
 export interface WorkspaceListParams {

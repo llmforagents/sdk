@@ -114,6 +114,72 @@ describe('HttpTransport.get()', () => {
   });
 });
 
+describe('HttpTransport.postBinary()', () => {
+  it('returns raw bytes and headers on success', async () => {
+    const bytes = new Uint8Array([10, 20, 30]);
+    fetchSpy.mockResolvedValueOnce(new Response(bytes, {
+      status: 200,
+      headers: { 'content-type': 'audio/mpeg', 'x-request-id': 'req_bin' },
+    }));
+
+    const result = await transport.postBinary('/v1/audio/speech', { model: 'm', input: 'hi', voice: 'sal' });
+
+    expect(result.data).toBeInstanceOf(Uint8Array);
+    expect(Array.from(result.data)).toEqual([10, 20, 30]);
+    expect(result.headers.get('content-type')).toBe('audio/mpeg');
+    expect(result.headers.get('x-request-id')).toBe('req_bin');
+
+    expect(fetchSpy).toHaveBeenCalledOnce();
+    const [url, opts] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe(`${BASE_URL}/v1/audio/speech`);
+    expect(opts.method).toBe('POST');
+    expect(opts.headers).toEqual(expect.objectContaining({
+      'content-type': 'application/json',
+      'authorization': `Bearer ${API_KEY}`,
+    }));
+  });
+
+  it('throws LLM4AgentsError with requestId on HTTP error', async () => {
+    fetchSpy.mockResolvedValueOnce(mockResponse({ error: 'Unauthorized' }, 401, { 'x-request-id': 'req_bin_err' }));
+
+    try {
+      await transport.postBinary('/v1/audio/speech', {});
+      expect.unreachable('should have thrown');
+    } catch (err) {
+      expect(err).toBeInstanceOf(LLM4AgentsError);
+      const e = err as LLM4AgentsError;
+      expect(e.code).toBe('auth_error');
+      expect(e.statusCode).toBe(401);
+      expect(e.requestId).toBe('req_bin_err');
+    }
+  });
+
+  it('throws insufficient_balance on 402', async () => {
+    fetchSpy.mockResolvedValueOnce(mockResponse({ error: 'insufficient balance' }, 402, { 'x-request-id': 'req_bin_402' }));
+
+    try {
+      await transport.postBinary('/v1/audio/speech', {});
+      expect.unreachable('should have thrown');
+    } catch (err) {
+      const e = err as LLM4AgentsError;
+      expect(e.code).toBe('insufficient_balance');
+      expect(e.statusCode).toBe(402);
+    }
+  });
+
+  it('throws network_error on fetch failure', async () => {
+    fetchSpy.mockRejectedValueOnce(new TypeError('Failed to fetch'));
+
+    try {
+      await transport.postBinary('/v1/audio/speech', {});
+      expect.unreachable('should have thrown');
+    } catch (err) {
+      const e = err as LLM4AgentsError;
+      expect(e.code).toBe('network_error');
+    }
+  });
+});
+
 describe('HttpTransport.postStream()', () => {
   it('returns ReadableStream on success', async () => {
     const stream = new ReadableStream({

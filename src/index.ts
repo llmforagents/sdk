@@ -62,6 +62,10 @@ export type {
   EmbeddingsOptions,
 } from './embeddings/types.js';
 
+// === Audio (TTS) ===
+export { Audio, Speech } from './audio/audio.js';
+export type { SpeechCreateParams, SpeechResult } from './audio/types.js';
+
 // === x402 walk-up payment ===
 export {
   X402PaymentRequiredError,
@@ -114,6 +118,7 @@ export type {
   ImageGenerateParams,
   ImageEditParams,
   ImageAnalyzeParams,
+  TextToSpeechParams,
 } from './tools/types.js';
 
 // === Types — MCP Server (arbitrary server connections) ===

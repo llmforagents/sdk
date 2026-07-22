@@ -4,6 +4,7 @@ import { McpTransport } from './transport/mcp.js';
 import { ChatCompletions } from './chat/completions.js';
 import { Conversation } from './chat/conversation.js';
 import { Embeddings } from './embeddings/embeddings.js';
+import { Audio } from './audio/audio.js';
 import { Wallets } from './wallets/wallets.js';
 import { Transfer } from './transfer/transfer.js';
 import { Tools } from './tools/tools.js';
@@ -26,6 +27,7 @@ export class LLM4AgentsClient {
   readonly tools: Tools;
   readonly agents: Agents;
   readonly embeddings: Embeddings;
+  readonly audio: Audio;
   readonly models: { readonly list: (params?: ModelListParams) => Promise<ModelListResult> };
   /**
    * Low-level x402 helpers (`sign`, `signFromRequirements`, `probe`).
@@ -61,6 +63,7 @@ export class LLM4AgentsClient {
     this.tools = tools;
     this.agents = new Agents(http);
     this.embeddings = new Embeddings(http);
+    this.audio = new Audio(http);
     this.models = {
       list: (params?: ModelListParams) => {
         const qs = params?.search ? { search: params.search } : undefined;

@@ -1,5 +1,5 @@
 import type { McpTransport } from '../transport/mcp.js';
-import type { ToolDefinition, McpToolResult } from './types.js';
+import type { ToolDefinition, McpToolResult, TextToSpeechParams } from './types.js';
 import { connect as _connect, type McpServerConfig } from './connect.js';
 import type { McpServerHandle } from '../transport/mcp-stdio.js';
 import { Scraper } from './scraper.js';
@@ -47,6 +47,11 @@ export class Tools {
 
   async call(name: string, args: Readonly<Record<string, unknown>>, signal?: AbortSignal): Promise<McpToolResult> {
     return this.mcp.callTool(name, args, signal);
+  }
+
+  /** Convert text to speech via the `text_to_speech` MCP tool (metered per 1k chars; audio >256KB lands in your workspace). */
+  async textToSpeech(params: TextToSpeechParams, signal?: AbortSignal): Promise<McpToolResult> {
+    return this.mcp.callTool('text_to_speech', params, signal);
   }
 
   /**
