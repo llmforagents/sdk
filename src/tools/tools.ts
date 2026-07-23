@@ -1,5 +1,5 @@
 import type { McpTransport } from '../transport/mcp.js';
-import type { ToolDefinition, McpToolResult, TextToSpeechParams } from './types.js';
+import type { ToolDefinition, McpToolResult, TextToSpeechParams, GenerateVideoParams } from './types.js';
 import { connect as _connect, type McpServerConfig } from './connect.js';
 import type { McpServerHandle } from '../transport/mcp-stdio.js';
 import { Scraper } from './scraper.js';
@@ -52,6 +52,16 @@ export class Tools {
   /** Convert text to speech via the `text_to_speech` MCP tool (metered per 1k chars; audio >256KB lands in your workspace). */
   async textToSpeech(params: TextToSpeechParams, signal?: AbortSignal): Promise<McpToolResult> {
     return this.mcp.callTool('text_to_speech', params, signal);
+  }
+
+  /** Kick off an async video generation job via the `generate_video` MCP tool. Prefer `client.videos.create()` for the typed REST flow. */
+  async generateVideo(params: GenerateVideoParams, signal?: AbortSignal): Promise<McpToolResult> {
+    return this.mcp.callTool('generate_video', params, signal);
+  }
+
+  /** Poll an async video generation job via the `video_status` MCP tool. */
+  async videoStatus(jobId: string, signal?: AbortSignal): Promise<McpToolResult> {
+    return this.mcp.callTool('video_status', { job_id: jobId }, signal);
   }
 
   /**

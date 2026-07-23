@@ -69,6 +69,40 @@ describe('Tools.textToSpeech()', () => {
   });
 });
 
+describe('Tools.generateVideo()', () => {
+  it('delegates to mcp.callTool with the generate_video tool name', async () => {
+    fetchSpy.mockResolvedValueOnce(new Response(JSON.stringify({
+      result: { content: [{ type: 'text', text: '{"id":"job_1","status":"pending"}' }] },
+    }), { status: 200, headers: { 'content-type': 'application/json' } }));
+
+    const result = await tools.generateVideo({ prompt: 'A cat riding a skateboard', model: 'kling-2.5' });
+
+    expect(result.text).toBe('{"id":"job_1","status":"pending"}');
+    expect(fetchSpy).toHaveBeenCalledOnce();
+    const [, opts] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(opts.body as string) as { params: { name: string; arguments: unknown } };
+    expect(body.params.name).toBe('generate_video');
+    expect(body.params.arguments).toEqual({ prompt: 'A cat riding a skateboard', model: 'kling-2.5' });
+  });
+});
+
+describe('Tools.videoStatus()', () => {
+  it('delegates to mcp.callTool with the video_status tool name and job_id argument', async () => {
+    fetchSpy.mockResolvedValueOnce(new Response(JSON.stringify({
+      result: { content: [{ type: 'text', text: '{"id":"job_1","status":"completed"}' }] },
+    }), { status: 200, headers: { 'content-type': 'application/json' } }));
+
+    const result = await tools.videoStatus('job_1');
+
+    expect(result.text).toBe('{"id":"job_1","status":"completed"}');
+    expect(fetchSpy).toHaveBeenCalledOnce();
+    const [, opts] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(opts.body as string) as { params: { name: string; arguments: unknown } };
+    expect(body.params.name).toBe('video_status');
+    expect(body.params.arguments).toEqual({ job_id: 'job_1' });
+  });
+});
+
 describe('Tools sub-modules', () => {
   it('exposes scraper, search, image sub-modules', () => {
     expect(tools.scraper).toBeDefined();

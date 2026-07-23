@@ -892,6 +892,52 @@ const result = await client.tools.textToSpeech({
 
 `tools.textToSpeech()` delegates to the `text_to_speech` MCP tool (metered per 1k input characters). Audio payloads over 256KB are not inlined in the tool result — they land in your workspace storage instead; check `result.text` / `result.raw` for the workspace reference.
 
+## Video (async)
+
+Video generation is asynchronous: `create()` returns immediately with a job id and a charge estimate, and you poll `get()` until the job reaches a terminal status before fetching bytes with `content()`.
+
+```typescript
+const job = await client.videos.create({
+  prompt: 'A cat riding a skateboard through a neon city',
+  model: 'kling-2.5',
+  duration: 5,
+  resolution: '720p',
+  aspect_ratio: '16:9',
+  generate_audio: true,
+})
+console.log(job.id, job.status, job.charged_usd_cents)  // → 'job_abc', 'pending', 250
+
+// Poll until the job is done
+let status = await client.videos.get(job.id)
+while (status.status === 'pending' || status.status === 'in_progress') {
+  await new Promise((r) => setTimeout(r, 5000))
+  status = await client.videos.get(job.id)
+}
+
+if (status.status === 'completed') {
+  const { data, contentType } = await client.videos.content(job.id)
+  await fs.promises.writeFile('output.mp4', data)
+} else if (status.status === 'failed') {
+  console.error(status.error, 'refunded:', status.refunded)
+}
+```
+
+`videos.create()` posts to `POST /v1/videos` and returns a `VideoJobAccepted` (`202`): `id`, `status`, `polling_url`, `charged_usd_cents` — the estimated charge reserved upfront. `videos.get(id)` polls `GET /v1/videos/{id}` and returns a `VideoJobStatus` whose `status` is one of `pending | in_progress | completed | failed | cancelled | expired`; once `completed` it carries `video_url`, and on `failed`/`cancelled`/`expired` it carries `error` and a `refunded` flag (the reserved estimate is automatically refunded when a job doesn't complete). `videos.content(id)` fetches `GET /v1/videos/{id}/content` and returns a `VideoContentResult`: `data` (`Uint8Array` — raw mp4 bytes), `contentType` (defaults to `video/mp4`), and an optional `requestId` from the `x-request-id` response header. Like audio, the entire `/v1/videos` surface is **Bearer-only** — it is not on the x402 walk-up allowlist.
+
+MCP tool equivalents, useful inside `client.tools.call()` dispatch or a tool-calling conversation loop:
+
+```typescript
+const started = await client.tools.generateVideo({
+  prompt: 'A cat riding a skateboard through a neon city',
+  image_url: 'https://example.com/first-frame.png',  // https only
+  model: 'kling-2.5',
+  duration: 5,
+})
+const polled = await client.tools.videoStatus('job_abc')
+```
+
+`tools.generateVideo()` delegates to the `generate_video` MCP tool and `tools.videoStatus(jobId)` delegates to `video_status` (with the job id passed as `job_id`). Prefer `client.videos.*` for the typed REST flow above; these wrappers exist for tool-calling loops that dispatch by tool name.
+
 ## Error Handling
 
 All errors are instances of `LLM4AgentsError`:
@@ -949,11 +995,23 @@ const client = new LLM4AgentsClient({
   available as `client.tools.textToSpeech({ text, voice?, model?, format? })` for tool-calling
   conversation loops. See [Audio (TTS)](#audio-tts).
 - New types exported: `Audio`, `Speech`, `SpeechCreateParams`, `SpeechResult`, `TextToSpeechParams`.
+- **Async video generation** — `client.videos.create({ prompt, model?, image?, duration?, resolution?,
+  aspect_ratio?, generate_audio?, seed? })` posts to `POST /v1/videos` and returns a
+  `VideoJobAccepted` (`202`) immediately; poll with `client.videos.get(id)` until `status` is
+  terminal, then fetch bytes with `client.videos.content(id)` (`VideoContentResult.data` is a
+  `Uint8Array`, `contentType` defaults to `video/mp4`). Failed/cancelled/expired jobs are
+  automatically refunded (`VideoJobStatus.refunded`). This endpoint is Bearer-only (not on the
+  x402 walk-up allowlist). MCP-tool equivalents are also available as
+  `client.tools.generateVideo({ prompt, image_url?, model?, duration?, resolution?, aspect_ratio?,
+  generate_audio? })` and `client.tools.videoStatus(jobId)`. See [Video (async)](#video-async).
+- New types exported: `Videos`, `VideoCreateParams`, `VideoJobAccepted`, `VideoJobStatus`,
+  `VideoContentResult`, `GenerateVideoParams`.
 - The REST API's `GET /api/v1/transactions` endpoint now accepts an optional `?service=` query
   filter (alongside the existing `?type=`) to narrow results to a specific billed service:
-  `llm` (chat completions + embeddings, default), `tts` (audio speech), `tools` (MCP registry
-  tools), `scraper`, `search`, `image`, `workspace`. Typed SDK support for this filter will land
-  in a follow-up release — for now, pass it via a raw fetch against the REST endpoint if needed.
+  `llm` (chat completions + embeddings, default), `tts` (audio speech), `video` (video
+  generation), `tools` (MCP registry tools), `scraper`, `search`, `image`, `workspace`. Typed SDK
+  support for this filter will land in a follow-up release — for now, pass it via a raw fetch
+  against the REST endpoint if needed.
 
 ## What's New in v2.7
 

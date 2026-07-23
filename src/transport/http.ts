@@ -260,6 +260,25 @@ export class HttpTransport {
     return { data: new Uint8Array(await res.arrayBuffer()), headers: res.headers };
   }
 
+  /** GET that returns raw bytes (e.g. /v1/videos/{id}/content). Bearer-only. */
+  async getBinary(path: string): Promise<{ data: Uint8Array; headers: Headers }> {
+    let res: Response;
+    try {
+      res = await fetch(`${this.baseUrl}${path}`, {
+        method: 'GET',
+        headers: { authorization: `Bearer ${this.apiKey}` },
+        signal: this.buildSignal(),
+      });
+    } catch (err) {
+      throw this.mapFetchError(err);
+    }
+    if (!res.ok) {
+      const text = await res.text();
+      throw mapHttpError(res.status, text, res.headers.get('x-request-id') ?? undefined);
+    }
+    return { data: new Uint8Array(await res.arrayBuffer()), headers: res.headers };
+  }
+
   async get<T>(path: string, params?: Readonly<Record<string, string>>): Promise<T> {
     let url = `${this.baseUrl}${path}`;
     if (params) {

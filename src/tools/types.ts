@@ -121,6 +121,17 @@ export interface TextToSpeechParams {
   readonly [key: string]: unknown;
 }
 
+export interface GenerateVideoParams {
+  readonly prompt: string;
+  readonly image_url?: string;
+  readonly model?: string;
+  readonly duration?: number;
+  readonly resolution?: '480p' | '720p' | '1080p';
+  readonly aspect_ratio?: string;
+  readonly generate_audio?: boolean;
+  readonly [key: string]: unknown;
+}
+
 // Workspace tool params
 
 export interface WorkspaceListParams {

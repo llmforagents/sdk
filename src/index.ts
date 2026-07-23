@@ -66,6 +66,15 @@ export type {
 export { Audio, Speech } from './audio/audio.js';
 export type { SpeechCreateParams, SpeechResult } from './audio/types.js';
 
+// === Video (async) ===
+export { Videos } from './videos/videos.js';
+export type {
+  VideoCreateParams,
+  VideoJobAccepted,
+  VideoJobStatus,
+  VideoContentResult,
+} from './videos/types.js';
+
 // === x402 walk-up payment ===
 export {
   X402PaymentRequiredError,
@@ -119,6 +128,7 @@ export type {
   ImageEditParams,
   ImageAnalyzeParams,
   TextToSpeechParams,
+  GenerateVideoParams,
 } from './tools/types.js';
 
 // === Types — MCP Server (arbitrary server connections) ===

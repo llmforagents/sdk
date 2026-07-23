@@ -5,6 +5,7 @@ import { ChatCompletions } from './chat/completions.js';
 import { Conversation } from './chat/conversation.js';
 import { Embeddings } from './embeddings/embeddings.js';
 import { Audio } from './audio/audio.js';
+import { Videos } from './videos/videos.js';
 import { Wallets } from './wallets/wallets.js';
 import { Transfer } from './transfer/transfer.js';
 import { Tools } from './tools/tools.js';
@@ -28,6 +29,7 @@ export class LLM4AgentsClient {
   readonly agents: Agents;
   readonly embeddings: Embeddings;
   readonly audio: Audio;
+  readonly videos: Videos;
   readonly models: { readonly list: (params?: ModelListParams) => Promise<ModelListResult> };
   /**
    * Low-level x402 helpers (`sign`, `signFromRequirements`, `probe`).
@@ -64,6 +66,7 @@ export class LLM4AgentsClient {
     this.agents = new Agents(http);
     this.embeddings = new Embeddings(http);
     this.audio = new Audio(http);
+    this.videos = new Videos(http);
     this.models = {
       list: (params?: ModelListParams) => {
         const qs = params?.search ? { search: params.search } : undefined;
