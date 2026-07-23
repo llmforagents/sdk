@@ -939,6 +939,31 @@ const polled = await client.tools.videoStatus('job_abc')
 
 `tools.generateVideo()` delegates to the `generate_video` MCP tool and `tools.videoStatus(jobId)` delegates to `video_status` (with the job id passed as `job_id`). Prefer `client.videos.*` for the typed REST flow above; these wrappers exist for tool-calling loops that dispatch by tool name.
 
+## Images
+
+Synchronous image generation — unlike video, `generate()` returns the finished image(s) inline in the response body, no polling required.
+
+```typescript
+const res = await client.images.generate({
+  prompt: 'A robot writing code, studio lighting',
+  model: 'x-ai/grok-image-1.0',
+  n: 1,
+  resolution: '1K',
+  output_format: 'png',
+})
+
+console.log(res.created, res.usage?.cost)  // → 1700000000, 0.04 (real cost, USD)
+
+const image = res.data[0]
+if (image) {
+  await fs.promises.writeFile('output.png', Buffer.from(image.b64_json, 'base64'))
+}
+```
+
+`images.generate()` posts to `POST /v1/images/generations` and returns an `ImagesGenerateResponse`: `created` (unix timestamp, optional), `data` (array of `{ b64_json, media_type? }` — base64-encoded image bytes, decode with `Buffer.from(b64_json, 'base64')` in Node or `atob`/`Uint8Array` in other runtimes), and `usage.cost` — the **real** cost in USD for the images actually generated (not an upfront estimate like `videos.create()`'s `charged_usd_cents`). The same billing detail is echoed in the `x-charged-usd-cents` response header alongside `x-request-id` and `x-model-used`. A 402 raises the usual `insufficient_balance` `LLM4AgentsError`. Like audio and video, `/v1/images/generations` is **Bearer-only** — it is not on the x402 walk-up allowlist.
+
+**`client.images.generate` vs `client.tools.image.*`:** these are two different surfaces and are not interchangeable. `client.images.generate()` talks to the main proxy's `/v1/images/generations` REST endpoint directly — synchronous, typed, and billed against your agent balance like chat/embeddings/audio/video. `client.tools.image.generate/edit/analyze()` (see [MCP Tools → Image](#image)) instead dispatch to the scraper-worker's PiAPI-backed `generate_image` / `edit_image` / `analyze_image` MCP tools, which support image editing and vision analysis that the `/v1/images/generations` endpoint does not, and are priced per the MCP tool pricing table rather than the images-service model catalog. Use `client.images.generate()` for straightforward text-to-image generation against a specific model slug; use `client.tools.image.*` when you need edit/analyze or are already driving a tool-calling conversation loop.
+
 ## Error Handling
 
 All errors are instances of `LLM4AgentsError`:
@@ -1007,6 +1032,15 @@ const client = new LLM4AgentsClient({
   generate_audio? })` and `client.tools.videoStatus(jobId)`. See [Video (async)](#video-async).
 - New types exported: `Videos`, `VideoCreateParams`, `VideoJobAccepted`, `VideoJobStatus`,
   `VideoContentResult`, `GenerateVideoParams`.
+- **Synchronous image generation** — `client.images.generate({ prompt, model?, n?, resolution?,
+  aspect_ratio?, quality?, output_format?, background?, output_compression?, seed?,
+  input_references? })` posts to `POST /v1/images/generations` and returns the finished image(s)
+  inline (`ImagesGenerateResponse.data[].b64_json`, base64) — no polling, unlike video. `usage.cost`
+  reports the real USD cost of the images actually generated, also echoed via the
+  `x-charged-usd-cents` response header. This endpoint is Bearer-only (not on the x402 walk-up
+  allowlist) and is distinct from the PiAPI-backed `client.tools.image.*` MCP tools (edit/analyze
+  support, separate pricing). See [Images](#images).
+- New types exported: `Images`, `ImagesGenerateParams`, `ImagesGenerateResponse`, `GeneratedImage`.
 - The REST API's `GET /api/v1/transactions` endpoint now accepts an optional `?service=` query
   filter (alongside the existing `?type=`) to narrow results to a specific billed service:
   `llm` (chat completions + embeddings, default), `tts` (audio speech), `video` (video

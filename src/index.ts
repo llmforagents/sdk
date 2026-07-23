@@ -75,6 +75,14 @@ export type {
   VideoContentResult,
 } from './videos/types.js';
 
+// === Images ===
+export { Images } from './images/images.js';
+export type {
+  ImagesGenerateParams,
+  ImagesGenerateResponse,
+  GeneratedImage,
+} from './images/types.js';
+
 // === x402 walk-up payment ===
 export {
   X402PaymentRequiredError,
