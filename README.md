@@ -899,7 +899,8 @@ Video generation is asynchronous: `create()` returns immediately with a job id a
 ```typescript
 const job = await client.videos.create({
   prompt: 'A cat riding a skateboard through a neon city',
-  model: 'kling-2.5',
+  image: 'https://example.com/first-frame.png',  // x-ai/grok-imagine-video-1.5 is image-to-video
+  model: 'x-ai/grok-imagine-video-1.5',
   duration: 5,
   resolution: '720p',
   aspect_ratio: '16:9',
@@ -930,7 +931,7 @@ MCP tool equivalents, useful inside `client.tools.call()` dispatch or a tool-cal
 const started = await client.tools.generateVideo({
   prompt: 'A cat riding a skateboard through a neon city',
   image_url: 'https://example.com/first-frame.png',  // https only
-  model: 'kling-2.5',
+  model: 'x-ai/grok-imagine-video-1.5',
   duration: 5,
 })
 const polled = await client.tools.videoStatus('job_abc')

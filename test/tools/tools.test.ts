@@ -75,14 +75,14 @@ describe('Tools.generateVideo()', () => {
       result: { content: [{ type: 'text', text: '{"id":"job_1","status":"pending"}' }] },
     }), { status: 200, headers: { 'content-type': 'application/json' } }));
 
-    const result = await tools.generateVideo({ prompt: 'A cat riding a skateboard', model: 'kling-2.5' });
+    const result = await tools.generateVideo({ prompt: 'A cat riding a skateboard', model: 'x-ai/grok-imagine-video-1.5' });
 
     expect(result.text).toBe('{"id":"job_1","status":"pending"}');
     expect(fetchSpy).toHaveBeenCalledOnce();
     const [, opts] = fetchSpy.mock.calls[0] as [string, RequestInit];
     const body = JSON.parse(opts.body as string) as { params: { name: string; arguments: unknown } };
     expect(body.params.name).toBe('generate_video');
-    expect(body.params.arguments).toEqual({ prompt: 'A cat riding a skateboard', model: 'kling-2.5' });
+    expect(body.params.arguments).toEqual({ prompt: 'A cat riding a skateboard', model: 'x-ai/grok-imagine-video-1.5' });
   });
 });
 

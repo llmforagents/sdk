@@ -40,7 +40,7 @@ describe('Videos.create()', () => {
 
     const result = await videos.create({
       prompt: 'A cat riding a skateboard',
-      model: 'kling-2.5',
+      model: 'x-ai/grok-imagine-video-1.5',
       duration: 5,
       resolution: '720p',
     });
@@ -62,7 +62,7 @@ describe('Videos.create()', () => {
     }));
     expect(JSON.parse(opts.body as string)).toEqual({
       prompt: 'A cat riding a skateboard',
-      model: 'kling-2.5',
+      model: 'x-ai/grok-imagine-video-1.5',
       duration: 5,
       resolution: '720p',
     });
